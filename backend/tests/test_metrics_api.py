@@ -153,3 +153,79 @@ def test_publish_failure_returns_503(api):
     assert response.status_code == 503
     assert response.json() == {"detail": "Unable to publish metrics event to Kafka."}
     kafka.publish.assert_awaited_once()
+
+
+def test_dashboard_queries_concurrently_and_returns_combined_data(api):
+    import asyncio
+    client, pinot = api
+    point = {k: v for k, v in SNAPSHOT.items() if k not in ("event_id", "zone_id")}
+    started = set()
+    both_started = asyncio.Event()
+
+    async def query(sql):
+        started.add(sql)
+        if len(started) == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        return [SNAPSHOT] if sql == CURRENT_SQL else [point]
+
+    pinot.query.side_effect = query
+    response = client.get("/api/dashboard?zone_id=ZONE_1&window=1h")
+    assert response.status_code == 200
+    assert response.json() == {"current": SNAPSHOT, "history": [point]}
+    assert started == {CURRENT_SQL, HISTORY_SQL}
+    assert pinot.query.await_count == 2
+
+
+def test_empty_dashboard_returns_zero_state_and_empty_history(api):
+    client, pinot = api
+    pinot.query.return_value = []
+    response = client.get("/api/dashboard")
+    assert response.status_code == 200
+    assert response.json()["current"]["event_timestamp"] is None
+    assert response.json()["current"]["online_drivers"] == 0
+    assert response.json()["history"] == []
+
+
+def test_dashboard_can_return_current_snapshot_without_recent_history(api):
+    client, pinot = api
+    async def query(sql):
+        return [SNAPSHOT] if sql == CURRENT_SQL else []
+    pinot.query.side_effect = query
+    assert client.get("/api/dashboard").json() == {"current": SNAPSHOT, "history": []}
+
+
+@pytest.mark.parametrize("failed_sql", [CURRENT_SQL, HISTORY_SQL])
+def test_dashboard_query_failure_returns_503(api, failed_sql):
+    client, pinot = api
+    async def query(sql):
+        if sql == failed_sql:
+            raise PinotQueryError("Unavailable")
+        return []
+    pinot.query.side_effect = query
+    assert client.get("/api/dashboard").status_code == 503
+
+
+@pytest.mark.parametrize("query", ["zone_id=ZONE_2", "window=24h"])
+def test_dashboard_rejects_unsupported_parameters(api, query):
+    client, pinot = api
+    assert client.get(f"/api/dashboard?{query}").status_code == 422
+    pinot.query.assert_not_awaited()
+
+
+@pytest.mark.parametrize("malformed_sql", [CURRENT_SQL, HISTORY_SQL])
+def test_dashboard_invalid_results_are_not_zero_state(api, malformed_sql):
+    client, pinot = api
+    async def query(sql):
+        return [{"online_drivers": 1}] if sql == malformed_sql else []
+    pinot.query.side_effect = query
+    assert client.get("/api/dashboard").status_code == 503
+
+
+@pytest.mark.parametrize("missing", ["zone_id", "event_id", "event_timestamp"])
+def test_stored_metadata_must_not_be_filled_with_defaults(api, missing):
+    client, pinot = api
+    row = dict(SNAPSHOT)
+    del row[missing]
+    pinot.query.return_value = [row]
+    assert client.get("/api/metrics/current").status_code == 503

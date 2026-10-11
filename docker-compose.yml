@@ -1,8 +1,44 @@
 name: ${COMPOSE_PROJECT_NAME:-ride-analytics}
 
 services:
+  frontend:
+    profiles: [web]
+    build:
+      context: ./frontend
+      args:
+        VITE_DASHBOARD_POLL_INTERVAL_MS: ${DASHBOARD_POLL_INTERVAL_MS:-2000}
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, --spider, "http://127.0.0.1/settings"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend-test:
+    profiles: [test]
+    build:
+      context: ./frontend
+      target: test
+
+  frontend-e2e:
+    profiles: [e2e]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.e2e
+    environment:
+      E2E_BASE_URL: http://frontend
+    volumes:
+      - ./frontend/test-results:/app/test-results
+    depends_on:
+      frontend:
+        condition: service_healthy
+
   backend:
-    profiles: [api]
+    profiles: [api, web]
     build: ./backend
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"

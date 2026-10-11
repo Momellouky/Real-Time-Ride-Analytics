@@ -33,6 +33,8 @@ async def test_response_mapping(rows, expected):
     {**result([]), "numServersQueried": 2, "numServersResponded": 1},
     {}, result([["a"]]), result([["a", 20, 30]]),
     {"resultTable": None}, [],
+    {"resultTable": {"dataSchema": {"columnNames": ["value", "value"]}, "rows": [[1, 2]]}},
+    {"resultTable": {"dataSchema": {"columnNames": ["value"]}, "rows": [{"value": 1}]}},
 ])
 async def test_invalid_or_incomplete_result_raises(payload):
     client = PinotClient("http://broker", transport=httpx.MockTransport(

@@ -26,6 +26,11 @@ class HistoryPoint(MetricValues):
     event_timestamp: int = Field(ge=0, strict=True)
 
 
+class DashboardResponse(BaseModel):
+    current: CurrentMetrics
+    history: list[HistoryPoint]
+
+
 class MetricsSnapshotInput(MetricValues):
     zone_id: Literal["ZONE_1"]
     model_config = ConfigDict(extra="forbid")

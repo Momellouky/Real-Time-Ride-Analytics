@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated, Literal
 from time import time_ns
 from uuid import uuid4
@@ -7,11 +8,13 @@ from pydantic import ValidationError
 
 from app.models.metrics import (
     CurrentMetrics, HistoryPoint, MetricsSnapshotInput, MetricsEvent, MetricsAccepted,
+    DashboardResponse,
 )
 from app.services.kafka_producer import MetricsKafkaProducer
 from app.services.pinot_client import PinotClient, PinotQueryError
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
+dashboard_router = APIRouter(prefix="/api", tags=["dashboard"])
 
 CURRENT_SQL = """
 SELECT event_id, event_timestamp, zone_id, online_drivers, ride_requests,
@@ -62,11 +65,17 @@ async def current_metrics(
     zone_id: Literal["ZONE_1"] = "ZONE_1",
 ) -> CurrentMetrics:
     rows = await pinot.query(CURRENT_SQL)
+    return parse_current(rows)
+
+
+def parse_current(rows: list[dict]) -> CurrentMetrics:
     if not rows:
         return CurrentMetrics.zero()
     try:
+        if any(rows[0].get(field) is None for field in ('zone_id', 'event_id', 'event_timestamp')):
+            raise ValueError("Stored snapshot lacks event metadata")
         snapshot = CurrentMetrics.model_validate(rows[0])
-        if snapshot.event_id is None or snapshot.event_timestamp is None:
+        if not snapshot.event_id:
             raise ValueError("Stored snapshot lacks event metadata")
         return snapshot
     except (ValidationError, ValueError) as exc:
@@ -80,7 +89,24 @@ async def metrics_history(
     window: Literal["1h"] = "1h",
 ) -> list[HistoryPoint]:
     rows = await pinot.query(HISTORY_SQL)
+    return parse_history(rows)
+
+
+def parse_history(rows: list[dict]) -> list[HistoryPoint]:
     try:
         return [HistoryPoint.model_validate(row) for row in rows]
     except ValidationError as exc:
         raise PinotQueryError("Invalid history returned by Pinot") from exc
+
+
+@dashboard_router.get("/dashboard", response_model=DashboardResponse)
+async def dashboard(
+    pinot: Annotated[PinotClient, Depends(get_pinot)],
+    zone_id: Literal["ZONE_1"] = "ZONE_1",
+    window: Literal["1h"] = "1h",
+) -> DashboardResponse:
+    current_rows, history_rows = await asyncio.gather(
+        pinot.query(CURRENT_SQL), pinot.query(HISTORY_SQL),
+    )
+    return DashboardResponse(current=parse_current(current_rows),
+                             history=parse_history(history_rows))

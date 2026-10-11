@@ -2,8 +2,10 @@ FROM python:3.13-slim
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY pyproject.toml ./
+COPY requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 COPY app ./app
-RUN pip install --no-cache-dir '.[test]'
+RUN pip install --no-cache-dir --no-deps .
 COPY tests ./tests
 COPY scripts ./scripts
 EXPOSE 8000

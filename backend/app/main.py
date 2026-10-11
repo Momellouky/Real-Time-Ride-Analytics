@@ -4,7 +4,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api.metrics import router
+from app.api.metrics import router, dashboard_router
 from app.config import Settings
 from app.services.pinot_client import PinotClient, PinotQueryError
 from app.services.kafka_producer import MetricsKafkaProducer, KafkaPublishError
@@ -35,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Real-Time Ride Analytics API", version="0.1.0",
                   lifespan=lifespan)
     app.include_router(router)
+    app.include_router(dashboard_router)
 
     @app.exception_handler(KafkaPublishError)
     async def handle_kafka_error(request: Request, exc: KafkaPublishError):
