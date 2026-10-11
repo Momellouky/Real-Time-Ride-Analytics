@@ -8,6 +8,7 @@ from app.api.metrics import router, dashboard_router
 from app.config import Settings
 from app.services.pinot_client import PinotClient, PinotQueryError
 from app.services.kafka_producer import MetricsKafkaProducer, KafkaPublishError
+from app.generator.service import GeneratorService
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +24,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         kafka = MetricsKafkaProducer(config.kafka_bootstrap_servers, config.kafka_topic,
                                      timeout=config.kafka_publish_timeout_seconds)
         app.state.kafka = kafka
+        generator = GeneratorService(config.kafka_bootstrap_servers,
+                                     config.kafka_publish_timeout_seconds)
+        app.state.generator = generator
         try:
             await kafka.start()
             yield
         finally:
             try:
-                await kafka.stop()
+                try:
+                    await generator.stop()
+                finally:
+                    await kafka.stop()
             finally:
                 await pinot.close()
 

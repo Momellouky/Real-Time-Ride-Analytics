@@ -98,9 +98,9 @@ and one Pinot replica.
 ## v2 event-driven pipeline
 
 The v2 implementation adds immutable ride and driver events alongside the existing
-v1 snapshot workflow. Its data plane and in-memory simulation model are available
-now; background scheduling, generator controls, analytical APIs, and the v2
-dashboard follow in later phases.
+v1 snapshot workflow. Its data plane, simulation model, scheduler, and generator
+lifecycle are available now; generator API/UI controls, analytical APIs, and the
+v2 dashboard follow in later phases.
 The v1 Settings page, APIs, topic, table, and dashboard retain their behavior.
 
 ```text
@@ -183,8 +183,8 @@ Memory therefore depends on pool sizes rather than the lifetime event count.
 state indexes and reciprocal user/driver/ride relationships for tests and
 debugging. These diagnostics do not replace future Pinot dashboard analytics.
 The model has no Kafka side effects or background tasks and expects one owner
-to execute actions sequentially. Kafka publication and failure handling belong
-to phase 3.
+to execute actions sequentially. The generator service described below owns
+execution and Kafka publication.
 
 Run the simulation and existing backend tests without starting the application:
 
@@ -194,6 +194,64 @@ docker compose --profile api run --rm --no-deps backend python -m pytest -q
 ```
 
 Phase 2 results are recorded in [docs/v2-step-2-verification.md](docs/v2-step-2-verification.md).
+
+### Scheduler and generator lifecycle
+
+`GeneratorService` is attached to FastAPI application state, initially STOPPED.
+It opens its separate operations producer only when started; loading the API
+does not generate events or require the v2 topic. HTTP controls and the Generator
+page are added in phase 4. One API process owns one generator; multiple workers
+would each have independent state and are outside this setup.
+
+Start validates pool sizes and a positive integer event rate, creates a fresh
+simulation and immutable run metadata, and enters WARMING_UP. It connects 10% of
+drivers (rounded up, at least one) through normal connected/waiting events before
+entering RUNNING. Start during WARMING_UP, RUNNING, or STOPPING raises a conflict.
+
+The scheduler issues event budgets every 100 ms, accounting for both one-event
+and two-event actions. Integer tenths preserve fractional credits. Budget is
+bounded to avoid catch-up bursts; one batch is generated/published at a time, so
+slow Kafka delivery reduces measured throughput rather than growing a queue.
+
+The dedicated producer targets `ride-operations` partition 0 with JSON events,
+`acks=all`, idempotence, and 5 ms linger. It enqueues a tick's events in sequence,
+then awaits all delivery acknowledgements, following the
+[aiokafka producer batching model](https://aiokafka.readthedocs.io/en/latest/producer.html).
+Idempotence protects transport retries; batches are not Kafka transactions, so
+paired transitions can briefly be observed separately during ingestion.
+
+Stop signals scheduling to halt, finishes the current batch, and drains Kafka
+sends before marking STOPPED. Repeated Stop is safe. Final statistics remain
+visible until the next Start creates a fresh run. Application shutdown stops the
+generator before closing the v1 producer and Pinot client.
+
+Status separates `generated_events` from Kafka-acknowledged `published_events`.
+`actual_events_per_second` measures acknowledged events over a rolling interval
+of approximately five seconds; final rate/statistics are retained after stopping.
+Pinot ingestion throughput will be measured separately in the analytics phase.
+Summary logs appear every five seconds and at run completion.
+
+Publication or drain failure ends the run in ERROR with `last_error`. The service
+does not replay a batch whose delivery is uncertain. Some records may have been
+delivered before failure, and in-memory diagnostics can then differ from Pinot;
+restart creates a fresh simulation ID. The configured Kafka timeout bounds
+startup, batch publication, and drain independently. A timed-out drain reports
+ERROR rather than claiming graceful completion.
+
+Verify the complete backend suite with the commands above. For a finite live
+check, provision v2 and run:
+
+```bash
+bash scripts/setup-v2.sh
+docker compose --profile api build backend
+docker compose --profile api run --rm --no-deps backend python scripts/verify-generator.py
+```
+
+This adds about 3,000 v2 events across two independent runs (10 seconds and
+2 seconds at 250 events/sec). It checks graceful stopping, fresh restart, exact
+Pinot row counts, event IDs/sequences, all event types, and reconstruction of
+current state after ingestion settles. Existing v1 snapshots are not modified.
+Phase 3 results are recorded in [docs/v2-step-3-verification.md](docs/v2-step-3-verification.md).
 
 ## Repository structure
 
