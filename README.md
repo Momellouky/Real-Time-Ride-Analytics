@@ -748,3 +748,85 @@ state against generator diagnostics, and checks that the second run replaces the
 first. These tests append operations events; they do not publish v1 snapshots.
 Step 6 verification results are recorded in
 [docs/v2-step-6-verification.md](docs/v2-step-6-verification.md).
+
+## Benchmark measurement services (Step 7, part 1)
+
+The backend now collects the measurements used by the benchmark API.
+Each shared `PinotClient` owns a bounded window of its latest 500 query timings.
+`pinot.metrics.latency_summary()` returns `avg_ms`, `p95_ms`, `p99_ms`, and
+`sample_count`. An empty window returns zeros with a zero sample count.
+Percentiles use the implementation plan's sorted, rounded-index convention.
+Timings measure client-observed request execution and response validation,
+including network overhead, failed queries, and cancellations. They cover all
+queries through that client, including v1 and v2, and reset on backend restart.
+They are individual query timings rather than combined dashboard request latency.
+
+A process-owned `SystemMetrics` sampler runs every second. Its cached
+`snapshot()` returns CPU percentage, memory percentage, used/total memory,
+`sampled_at_ms`, and scope `os_visible_to_backend`. HTTP readers will use cached
+samples rather than change CPU sampling intervals. CPU is null during initial
+priming; a sampling failure retains the timestamped last-good snapshot, or null
+if no successful sample exists. The sampler is cancelled during shutdown.
+
+CPU and memory describe the operating system visible to the backend through
+psutil. On native Linux Docker this typically reflects the host's `/proc` view;
+under Docker Desktop it can reflect the Docker VM. These are not container
+cgroup utilization or limits. Memory fields use the plan's `_gb` names but divide
+bytes by `1024 ** 3` (GiB). `memory_percent` follows psutil's available-memory
+calculation and need not equal `memory_used_gb / memory_total_gb * 100`.
+See the [psutil API reference](https://psutil.io/api/#psutil.cpu_percent) for CPU
+priming and memory semantics.
+
+The benchmark endpoint is described below; the dashboard observability section
+is the subsequent part of Step 7. These services do not start a generator run or append analytics
+events. Verification is recorded in
+[docs/step7-part1-verification.md](docs/step7-part1-verification.md).
+
+## Combined benchmark API (Step 7, part 2)
+
+`GET /api/v2/benchmark/metrics` combines the current or last simulation's generator
+statistics, Pinot ingestion measurements, shared query latency, and cached system
+samples. Its response has `simulation_id`, `as_of_ms`, `generator`, `pinot`, and
+`system` objects. The generator fields include status, target EPS, actual EPS,
+generated and Kafka-acknowledged (`published_events`) counts, and any last error.
+Actual EPS is the generator's rolling acknowledged publication rate; a stopped
+run retains its final rate rather than implying ongoing production.
+
+One Pinot aggregate returns both `total_ingested_events` and
+`latest_event_timestamp`. It filters on the captured run ID, `ZONE_1`, and an
+`as_of_ms` timestamp cutoff, excluding future-dated events. Runtime counters are
+sampled after the query completes. `events_not_yet_visible` is
+`max(0, generated_events - total_ingested_events)`; it includes generated events
+not yet acknowledged as well as ingestion backlog. This difference is a runtime
+observation, not a transactional snapshot of Kafka and Pinot.
+
+`ingestion_lag_ms` is the age of the newest query-visible event at response
+construction time, clamped to zero for clock regressions. It measures application
+freshness, not Kafka consumer-group lag. Both freshness and newest timestamp are
+null when no event is visible. After Stop, newest-event age continues increasing
+even when all events have been ingested; interpret it alongside generator status
+and pending-event count.
+
+Before the first run, the API skips Pinot queries and returns zero ingestion
+counts with null freshness. Shared query latency and cached system samples remain
+available. Latency includes this endpoint's query plus all other queries through
+the shared client, including failed calls and v1 queries; its 500-sample window is
+process-wide and is not reset on run changes. System sampling retains its timestamp
+and OS-visible scope. `system` is null if no successful sample exists; initial CPU
+priming is represented by a null `cpu_percent`.
+
+A run changing during query execution produces HTTP `409`. Pinot failures,
+partial results, or malformed ingestion aggregates produce HTTP `503`, without
+substituting generator counters for Pinot data. Stopped/error runs retain their
+last metadata. Restarting the backend clears that process-owned metadata while
+preserving stored events.
+
+```bash
+curl -fsS http://localhost:8000/api/v2/benchmark/metrics
+# Read-only integration verification using existing generator/Pinot data:
+docker compose --profile api run --build --rm --no-deps backend \
+  python scripts/verify-benchmark-api.py
+```
+
+The benchmark UI is the next part of Step 7. API verification results are in
+[docs/step7-part2-verification.md](docs/step7-part2-verification.md).

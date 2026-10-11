@@ -61,3 +61,10 @@ def event_rate(simulation_id: str, as_of_ms: int) -> str:
 COUNT(*) AS event_count, COUNT(*) / 10.0 AS events_per_second FROM operations
 WHERE {run_filter(simulation_id, as_of_ms)} AND event_timestamp >= {as_of_ms - 600_000}
 GROUP BY time_bucket ORDER BY time_bucket ASC LIMIT 1000"""
+
+
+def ingestion_metrics(simulation_id: str, as_of_ms: int) -> str:
+    # One aggregate keeps the count and newest timestamp in the same query.
+    return f"""SELECT COUNT(*) AS total_ingested_events,
+MAX(event_timestamp) AS latest_event_timestamp FROM operations
+WHERE {run_filter(simulation_id, as_of_ms)}"""

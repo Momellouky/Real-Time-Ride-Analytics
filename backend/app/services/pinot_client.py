@@ -1,4 +1,7 @@
 import httpx
+from time import perf_counter
+
+from app.services.pinot_metrics import PinotMetrics
 
 
 class PinotQueryError(RuntimeError):
@@ -10,11 +13,19 @@ class PinotClient:
                  transport: httpx.AsyncBaseTransport | None = None):
         self._url = f"{broker_url.rstrip('/')}/query/sql"
         self._client = httpx.AsyncClient(timeout=timeout, transport=transport)
+        self.metrics = PinotMetrics()
 
     async def close(self) -> None:
         await self._client.aclose()
 
     async def query(self, sql: str, *, options: dict[str, str] | None = None) -> list[dict]:
+        started = perf_counter()
+        try:
+            return await self._execute_query(sql, options=options)
+        finally:
+            self.metrics.record_latency((perf_counter() - started) * 1000)
+
+    async def _execute_query(self, sql: str, *, options: dict[str, str] | None = None) -> list[dict]:
         try:
             body = {'sql': sql}
             if options:

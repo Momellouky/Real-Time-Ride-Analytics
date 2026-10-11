@@ -11,6 +11,8 @@ from app.services.kafka_producer import MetricsKafkaProducer, KafkaPublishError
 from app.generator.service import GeneratorService
 from app.api.generator import router as generator_router
 from app.api.dashboard_v2 import router as dashboard_v2_router
+from app.services.system_metrics import SystemMetrics
+from app.api.benchmark import router as benchmark_router
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +31,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         generator = GeneratorService(config.kafka_bootstrap_servers,
                                      config.kafka_publish_timeout_seconds)
         app.state.generator = generator
+        system_metrics = SystemMetrics()
+        app.state.system_metrics = system_metrics
         try:
             await kafka.start()
+            await system_metrics.start()
             yield
         finally:
             try:
@@ -39,7 +44,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 finally:
                     await kafka.stop()
             finally:
-                await pinot.close()
+                try:
+                    await system_metrics.stop()
+                finally:
+                    await pinot.close()
 
     app = FastAPI(title="Real-Time Ride Analytics API", version="0.1.0",
                   lifespan=lifespan)
@@ -47,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(dashboard_router)
     app.include_router(generator_router)
     app.include_router(dashboard_v2_router)
+    app.include_router(benchmark_router)
 
     @app.exception_handler(KafkaPublishError)
     async def handle_kafka_error(request: Request, exc: KafkaPublishError):

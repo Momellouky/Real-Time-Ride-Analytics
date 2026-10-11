@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Step 7 Implementation Plan — Benchmarking & Observability</title>
+  <style>
+    :root {--bg:#f6f7f9;--card:#fff;--text:#1f2937;--muted:#667085;--border:#e4e7ec;--soft:#f2f4f7;--code:#101828;--good-bg:#ecfdf3;--good:#12b76a;--info-bg:#eff8ff;--info:#2e90fa;--warn-bg:#fffaeb;--warn:#f79009}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.6}main{max-width:1120px;margin:0 auto;padding:42px 24px 80px}header,section{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px;margin:20px 0}header{padding:38px;background:linear-gradient(135deg,#fff,#f2f4f7)}h1,h2,h3{color:#111827;line-height:1.25}h1{margin:0 0 10px;font-size:2.1rem}h2{margin-top:0}h3{margin-top:22px}.subtitle{color:var(--muted);font-size:1.04rem;max-width:900px}.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.pill{background:var(--soft);border:1px solid var(--border);border-radius:999px;padding:6px 10px;font-size:.86rem}pre{background:var(--code);color:#eaecf0;border-radius:10px;padding:16px;overflow-x:auto;line-height:1.46;font-size:.9rem}code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.93rem}th,td{border:1px solid var(--border);padding:10px 12px;text-align:left;vertical-align:top}th{background:var(--soft)}ul,ol{padding-left:22px}.callout{padding:13px 16px;border-left:4px solid #98a2b3;border-radius:6px;margin:14px 0}.good{background:var(--good-bg);border-color:var(--good)}.info{background:var(--info-bg);border-color:var(--info)}.warn{background:var(--warn-bg);border-color:var(--warn)}.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}.card{border:1px solid var(--border);border-radius:10px;padding:15px;background:#fcfcfd}.footer{text-align:center;color:var(--muted);font-size:.88rem;margin-top:32px}
+  </style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Step 7 Implementation Plan</h1>
+  <p class="subtitle">Benchmarking & Observability for the event-driven Apache Pinot ride analytics lab. This step adds runtime performance metrics directly to the v2 dashboard so load, latency, ingestion freshness, CPU, and memory can be observed while increasing event throughput.</p>
+  <div class="meta"><span class="pill">Scope: Step 7 only</span><span class="pill">FastAPI + Vue</span><span class="pill">Local machine metrics</span><span class="pill">Pinot query latency</span><span class="pill">Ingestion lag</span><span class="pill">50–1000 events/sec tests</span></div>
+</header>
+
+<section><h2>1. Goal</h2><p>Extend the v2 demo so the dashboard shows not only business analytics, but also how the system behaves under increasing load. The purpose is to observe when higher Kafka ingestion throughput begins to affect Pinot query latency, ingestion freshness, CPU usage, or memory usage.</p><div class="callout good"><strong>Success condition:</strong> while the generator is running, the dashboard should continuously show actual EPS, Pinot query latency, Pinot ingestion lag, total ingested events, CPU usage, and RAM usage.</div></section>
+
+<section><h2>2. Metrics to expose</h2><table><thead><tr><th>Metric</th><th>Source</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>Target events/sec</td><td>Generator config</td><td>Requested load.</td></tr>
+<tr><td>Actual events/sec</td><td>Generator runtime stats</td><td>Verify producer reaches requested load.</td></tr>
+<tr><td>Total generated events</td><td>Generator runtime stats</td><td>Shows producer output.</td></tr>
+<tr><td>Total ingested events</td><td>Pinot COUNT query</td><td>Shows what Pinot has actually ingested.</td></tr>
+<tr><td>Pinot query avg latency</td><td>FastAPI timing</td><td>Mean analytical query latency.</td></tr>
+<tr><td>Pinot query p95 latency</td><td>FastAPI rolling window</td><td>Useful tail-latency indicator.</td></tr>
+<tr><td>Pinot query p99 latency</td><td>FastAPI rolling window</td><td>Detect latency spikes.</td></tr>
+<tr><td>Pinot ingestion lag</td><td>Newest Pinot event timestamp vs now</td><td>Shows freshness under load.</td></tr>
+<tr><td>System CPU %</td><td><code>psutil</code></td><td>Observe CPU pressure.</td></tr>
+<tr><td>System memory %</td><td><code>psutil</code></td><td>Observe RAM pressure.</td></tr>
+<tr><td>System memory used GB</td><td><code>psutil</code></td><td>Useful on a 16 GB laptop.</td></tr>
+</tbody></table><div class="callout info">Container-level CPU/RAM per Pinot component can be added later. For this step, whole-machine metrics are sufficient and much simpler.</div></section>
+
+<section><h2>3. Backend architecture</h2><pre>FastAPI
+├── Generator service
+│   ├── target EPS
+│   ├── actual EPS
+│   └── generated event count
+│
+├── Pinot client
+│   ├── execute analytics queries
+│   ├── measure latency
+│   └── collect rolling latency samples
+│
+├── System metrics service
+│   ├── CPU %
+│   ├── memory %
+│   └── memory used
+│
+└── Benchmark API
+    └── GET /api/v2/benchmark/metrics</pre></section>
+
+<section><h2>4. Add system metrics dependency</h2><p>Add:</p><pre>psutil</pre><p>Example service:</p><pre>import psutil
+
+
+def get_system_metrics() -> dict:
+    memory = psutil.virtual_memory()
+
+    return {
+        "cpu_percent": psutil.cpu_percent(interval=None),
+        "memory_percent": memory.percent,
+        "memory_used_gb": round(memory.used / (1024 ** 3), 2),
+        "memory_total_gb": round(memory.total / (1024 ** 3), 2),
+    }</pre></section>
+
+<section><h2>5. Measure Pinot query latency</h2><p>Measure latency around every Pinot query in the shared Pinot client so all dashboard queries contribute to the same benchmark data.</p><pre>from collections import deque
+from time import perf_counter
+
+
+class PinotMetrics:
+    def __init__(self, max_samples: int = 500):
+        self.latencies_ms = deque(maxlen=max_samples)
+
+    def record_latency(self, latency_ms: float) -> None:
+        self.latencies_ms.append(latency_ms)</pre><p>Wrap query execution:</p><pre>async def query(self, sql: str, **kwargs):
+    started = perf_counter()
+
+    try:
+        return await self._execute_query(sql, **kwargs)
+    finally:
+        latency_ms = (perf_counter() - started) * 1000
+        self._metrics.record_latency(latency_ms)</pre><div class="callout info">Keep a bounded rolling window, for example the latest 500 Pinot queries, so memory usage does not grow forever.</div></section>
+
+<section><h2>6. Calculate avg, p95, and p99</h2><pre>def percentile(values: list[float], percentile_value: float) -> float:
+    if not values:
+        return 0.0
+
+    values = sorted(values)
+    index = int(round((percentile_value / 100.0) * (len(values) - 1)))
+    return values[index]
+
+
+def latency_summary(samples) -> dict:
+    values = list(samples)
+
+    if not values:
+        return {"avg_ms": 0.0, "p95_ms": 0.0, "p99_ms": 0.0, "sample_count": 0}
+
+    return {
+        "avg_ms": round(sum(values) / len(values), 2),
+        "p95_ms": round(percentile(values, 95), 2),
+        "p99_ms": round(percentile(values, 99), 2),
+        "sample_count": len(values),
+    }</pre></section>
+
+<section><h2>7. Calculate Pinot ingestion lag</h2><p>Ingestion lag is the difference between current time and the newest event visible in Pinot for the active simulation.</p><h3>Pinot query</h3><pre>SELECT MAX(event_timestamp) AS latest_event_timestamp
+FROM operations
+WHERE simulation_id = 'SIMULATION_ID'</pre><h3>FastAPI calculation</h3><pre>from time import time
+
+
+def calculate_ingestion_lag_ms(latest_event_timestamp: int | None) -> float:
+    if latest_event_timestamp is None:
+        return 0.0
+
+    now_ms = int(time() * 1000)
+    return max(0.0, now_ms - latest_event_timestamp)</pre><div class="callout warn">This is application-visible freshness, not raw Kafka consumer-group lag. For this lab it answers the practical question: “How old is the newest event I can query from Pinot?”</div></section>
+
+<section><h2>8. Total ingested events query</h2><pre>SELECT COUNT(*) AS total_ingested_events
+FROM operations
+WHERE simulation_id = 'SIMULATION_ID'</pre><p>Compare it with generator output:</p><pre>events_not_yet_visible = generated_events - total_ingested_events</pre></section>
+
+<section><h2>9. Benchmark metrics API</h2><p>Create:</p><pre>GET /api/v2/benchmark/metrics</pre><p>Example response:</p><pre>{
+  "simulation_id": "sim-44d1...",
+  "generator": {
+    "status": "RUNNING",
+    "target_events_per_second": 500,
+    "actual_events_per_second": 487.6,
+    "generated_events": 1248920
+  },
+  "pinot": {
+    "total_ingested_events": 1248113,
+    "events_not_yet_visible": 807,
+    "ingestion_lag_ms": 1460,
+    "query_latency": {
+      "avg_ms": 38.4,
+      "p95_ms": 74.1,
+      "p99_ms": 131.8,
+      "sample_count": 500
+    }
+  },
+  "system": {
+    "cpu_percent": 71.4,
+    "memory_percent": 79.2,
+    "memory_used_gb": 12.67,
+    "memory_total_gb": 15.87
+  }
+}</pre></section>
+
+<section><h2>10. Backend endpoint hot code</h2><pre>@router.get("/api/v2/benchmark/metrics")
+async def get_benchmark_metrics(request: Request):
+    generator = request.app.state.generator
+    pinot = request.app.state.pinot
+
+    simulation_id = generator.simulation_id
+    generator_stats = generator.get_stats()
+    system_stats = get_system_metrics()
+
+    if not simulation_id:
+        return {
+            "simulation_id": None,
+            "generator": generator_stats,
+            "pinot": {
+                "total_ingested_events": 0,
+                "events_not_yet_visible": 0,
+                "ingestion_lag_ms": 0,
+                "query_latency": pinot.metrics.latency_summary(),
+            },
+            "system": system_stats,
+        }
+
+    count_rows, latest_rows = await asyncio.gather(
+        pinot.query(TOTAL_INGESTED_SQL.format(simulation_id=simulation_id)),
+        pinot.query(LATEST_EVENT_SQL.format(simulation_id=simulation_id)),
+    )
+
+    ingested = count_rows[0]["total_ingested_events"]
+    latest_ts = latest_rows[0]["latest_event_timestamp"]
+
+    return {
+        "simulation_id": simulation_id,
+        "generator": generator_stats,
+        "pinot": {
+            "total_ingested_events": ingested,
+            "events_not_yet_visible": max(0, generator_stats["generated_events"] - ingested),
+            "ingestion_lag_ms": calculate_ingestion_lag_ms(latest_ts),
+            "query_latency": pinot.metrics.latency_summary(),
+        },
+        "system": system_stats,
+    }</pre></section>
+
+<section><h2>11. Dashboard changes</h2><div class="grid">
+<div class="card"><strong>Actual EPS</strong><p>Current generator throughput.</p></div>
+<div class="card"><strong>Pinot p95 latency</strong><p>Tail latency of recent queries.</p></div>
+<div class="card"><strong>Ingestion lag</strong><p>Newest event freshness.</p></div>
+<div class="card"><strong>CPU usage</strong><p>Whole-machine CPU percentage.</p></div>
+<div class="card"><strong>Memory usage</strong><p>Used GB and percentage.</p></div>
+<div class="card"><strong>Ingested events</strong><p>Pinot-visible rows for current simulation.</p></div>
+</div><h3>Recommended charts</h3><ul><li>Actual events/sec over time.</li><li>Pinot avg / p95 / p99 latency over time.</li><li>Pinot ingestion lag over time.</li><li>CPU % over time.</li><li>Memory % over time.</li></ul><p>Poll <code>/api/v2/benchmark/metrics</code> every 1–2 seconds and keep a rolling browser-side history, for example the most recent 10 minutes.</p></section>
+
+<section><h2>12. Frontend polling model</h2><pre>const MAX_POINTS = 300;
+
+async function refreshBenchmark() {
+  const metrics = await getBenchmarkMetrics();
+
+  history.value.push({
+    timestamp: Date.now(),
+    actualEps: metrics.generator.actual_events_per_second,
+    avgLatency: metrics.pinot.query_latency.avg_ms,
+    p95Latency: metrics.pinot.query_latency.p95_ms,
+    p99Latency: metrics.pinot.query_latency.p99_ms,
+    ingestionLag: metrics.pinot.ingestion_lag_ms,
+    cpu: metrics.system.cpu_percent,
+    memory: metrics.system.memory_percent,
+  });
+
+  if (history.value.length > MAX_POINTS) {
+    history.value.shift();
+  }
+}</pre><div class="callout info">Keeping benchmark chart history in the browser is enough for this step. There is no need to persist observability metrics into Pinot yet.</div></section>
+
+<section><h2>13. Recommended UI layout</h2><pre>Benchmark & Observability
+────────────────────────────────────────────
+
+Target EPS      Actual EPS      Ingested Events
+500             487.6           1,248,113
+
+Pinot avg       Pinot p95       Pinot p99
+38 ms           74 ms           132 ms
+
+Ingestion lag   CPU             Memory
+1.46 s          71%             12.7 / 15.9 GB
+
+[ Actual EPS over time ]
+[ Pinot query latency over time ]
+[ Pinot ingestion lag over time ]
+[ CPU usage over time ]
+[ Memory usage over time ]</pre></section>
+
+<section><h2>14. Controlled benchmark procedure</h2><ol><li>50 events/sec for 5 minutes.</li><li>Record average/p95/p99 latency, ingestion lag, CPU, and RAM.</li><li>Repeat at 100 events/sec.</li><li>Repeat at 250 events/sec.</li><li>Repeat at 500 events/sec.</li><li>Try 1000 events/sec only if memory and ingestion lag remain healthy.</li></ol><table><thead><tr><th>Load</th><th>Avg latency</th><th>p95</th><th>p99</th><th>Ingestion lag</th><th>CPU</th><th>RAM</th></tr></thead><tbody><tr><td>50/s</td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><td>100/s</td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><td>250/s</td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><td>500/s</td><td></td><td></td><td></td><td></td><td></td><td></td></tr><tr><td>1000/s</td><td></td><td></td><td></td><td></td><td></td><td></td></tr></tbody></table></section>
+
+<section><h2>15. How to interpret the results</h2><ul><li><strong>Actual EPS below target:</strong> generator or Kafka producer may be the bottleneck.</li><li><strong>Generated events rise but Pinot count lags:</strong> ingestion is not keeping up.</li><li><strong>Ingestion lag grows continuously:</strong> sustained load exceeds current ingestion capacity.</li><li><strong>p95/p99 rises while avg stays low:</strong> tail-latency degradation is starting.</li><li><strong>RAM approaches machine limit:</strong> stop increasing load before swapping distorts the benchmark.</li><li><strong>CPU near saturation:</strong> observe whether query latency or ingestion freshness degrades at the same time.</li></ul></section>
+
+<section><h2>16. Tests</h2><ul><li>Latency samples never exceed the rolling-window size.</li><li>Empty latency window returns zeros.</li><li>p95/p99 calculations return valid values.</li><li>Ingestion lag never becomes negative.</li><li>Benchmark endpoint works when no simulation is active.</li><li>Benchmark endpoint reports current simulation only.</li><li>Generated minus ingested count is never negative.</li><li>Frontend benchmark history remains bounded.</li><li>Dashboard continues updating if one benchmark request temporarily fails.</li></ul></section>
+
+<section><h2>17. Definition of done</h2><ul><li>☐ <code>psutil</code> metrics are exposed.</li><li>☐ Pinot query latency is measured centrally.</li><li>☐ Rolling avg / p95 / p99 are available.</li><li>☐ Pinot ingestion lag is calculated from newest visible event.</li><li>☐ Total Pinot-ingested events are shown.</li><li>☐ Actual generator EPS is shown.</li><li>☐ Benchmark API combines all runtime metrics.</li><li>☐ Dashboard shows benchmark summary cards.</li><li>☐ Dashboard shows EPS, latency, lag, CPU, and memory charts.</li><li>☐ Browser-side metric history is bounded.</li><li>☐ Controlled tests can be run at 50/100/250/500/1000 EPS.</li><li>☐ Results can be compared visually without external monitoring software.</li></ul></section>
+
+<div class="footer">Step 7 — Benchmarking & Observability Implementation Plan</div>
+</main>
+</body>
+</html>
