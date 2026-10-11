@@ -98,8 +98,9 @@ and one Pinot replica.
 ## v2 event-driven pipeline
 
 The v2 implementation adds immutable ride and driver events alongside the existing
-v1 snapshot workflow. Its data plane is available now; the simulation engine,
-generator controls, analytical APIs, and v2 dashboard follow in later phases.
+v1 snapshot workflow. Its data plane and in-memory simulation model are available
+now; background scheduling, generator controls, analytical APIs, and the v2
+dashboard follow in later phases.
 The v1 Settings page, APIs, topic, table, and dashboard retain their behavior.
 
 ```text
@@ -157,6 +158,42 @@ rejects conflicting schemas, ingestion settings, or topic partition/replica coun
 so existing analytical data remains intact.
 
 Phase 1 results are recorded in [docs/v2-step-1-verification.md](docs/v2-step-1-verification.md).
+
+### Simulation model
+
+`backend/app/generator/` provides users, drivers, active rides, immutable operation
+events, and six business actions: connect/disconnect a driver and
+request/cancel/accept/complete a ride. A fresh simulation initializes users as IDLE
+and drivers as OFFLINE, with a unique simulation ID and sequence starting at zero.
+Invalid actions return no events and leave domain state unchanged.
+
+State pools use dense arrays with position indexes for constant-time selection,
+insertion, and removal. Selection excludes unavailable actions and can filter by
+event budget; action costs distinguish one-event actions from two-event actions.
+Weights match the v2 plan. The future scheduler can consume this interface without
+scanning the entire population on each tick.
+
+Each successful action returns immutable events ready for JSON serialization.
+Sequences increase per event, including paired transitions. Timestamps do not
+regress if the wall clock moves backward. Completed/cancelled rides are removed
+from active memory; their returned events carry history for later publication.
+Memory therefore depends on pool sizes rather than the lifetime event count.
+
+`Simulation.counts()` supplies generator diagnostics; `check_invariants()` audits
+state indexes and reciprocal user/driver/ride relationships for tests and
+debugging. These diagnostics do not replace future Pinot dashboard analytics.
+The model has no Kafka side effects or background tasks and expects one owner
+to execute actions sequentially. Kafka publication and failure handling belong
+to phase 3.
+
+Run the simulation and existing backend tests without starting the application:
+
+```bash
+docker compose --profile api build backend
+docker compose --profile api run --rm --no-deps backend python -m pytest -q
+```
+
+Phase 2 results are recorded in [docs/v2-step-2-verification.md](docs/v2-step-2-verification.md).
 
 ## Repository structure
 
