@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { getCurrentMetrics, updateMetrics } from '../src/services/api.js';
+import { getCurrentMetrics, updateMetrics, getGeneratorStatus, startGenerator, stopGenerator } from '../src/services/api.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -29,4 +29,16 @@ it('shows a connection error for network failures', async () => {
 it('handles non-JSON responses', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>Bad gateway</html>', { status: 502 })));
   await expect(getCurrentMetrics()).rejects.toThrow(/unreadable response/);
+});
+
+it('uses the v2 control endpoints and status abort signal', async () => {
+  const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ status: 'STOPPED' })));
+  vi.stubGlobal('fetch', fetch);
+  const controller = new AbortController();
+  await getGeneratorStatus(controller.signal);
+  const payload = { user_count: 10, driver_count: 2, target_events_per_second: 50 };
+  await startGenerator(payload); await stopGenerator();
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/v2/generator/status', '/api/v2/generator/start', '/api/v2/generator/stop']);
+  expect(fetch.mock.calls[1][1]).toMatchObject({ method: 'POST', body: JSON.stringify(payload) });
+  expect(fetch.mock.calls[2][1]).toMatchObject({ method: 'POST' });
 });

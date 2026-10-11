@@ -61,6 +61,7 @@ Startup does not insert sample data.
 
 - Dashboard: http://localhost:5173
 - Metrics Settings: http://localhost:5173/settings
+- Event Generator: http://localhost:5173/generator
 - API documentation: http://localhost:8000/docs
 - Pinot Controller and Query Console: http://localhost:9000
 
@@ -98,9 +99,10 @@ and one Pinot replica.
 ## v2 event-driven pipeline
 
 The v2 implementation adds immutable ride and driver events alongside the existing
-v1 snapshot workflow. Its data plane, simulation model, scheduler, and generator
-lifecycle are available now; generator API/UI controls, analytical APIs, and the
-v2 dashboard follow in later phases.
+v1 snapshot workflow. Its data plane, simulation model, scheduler, lifecycle, and
+Generator API/UI controls and Pinot analytical query service are available now.
+The combined v2 dashboard API and UI follow in phase 6. Standard startup provisions both workflows;
+the independent v2 setup command below is also available.
 The v1 Settings page, APIs, topic, table, and dashboard retain their behavior.
 
 ```text
@@ -170,7 +172,7 @@ Invalid actions return no events and leave domain state unchanged.
 State pools use dense arrays with position indexes for constant-time selection,
 insertion, and removal. Selection excludes unavailable actions and can filter by
 event budget; action costs distinguish one-event actions from two-event actions.
-Weights match the v2 plan. The future scheduler can consume this interface without
+Weights match the v2 plan. The scheduler consumes this interface without
 scanning the entire population on each tick.
 
 Each successful action returns immutable events ready for JSON serialization.
@@ -199,8 +201,7 @@ Phase 2 results are recorded in [docs/v2-step-2-verification.md](docs/v2-step-2-
 
 `GeneratorService` is attached to FastAPI application state, initially STOPPED.
 It opens its separate operations producer only when started; loading the API
-does not generate events or require the v2 topic. HTTP controls and the Generator
-page are added in phase 4. One API process owns one generator; multiple workers
+does not generate events or require the v2 topic. One API process owns one generator; multiple workers
 would each have independent state and are outside this setup.
 
 Start validates pool sizes and a positive integer event rate, creates a fresh
@@ -252,6 +253,113 @@ This adds about 3,000 v2 events across two independent runs (10 seconds and
 Pinot row counts, event IDs/sequences, all event types, and reconstruction of
 current state after ingestion settles. Existing v1 snapshots are not modified.
 Phase 3 results are recorded in [docs/v2-step-3-verification.md](docs/v2-step-3-verification.md).
+
+### Generator controls
+
+Open [the Generator page](http://localhost:5173/generator) from the main
+navigation. Configure the user and driver pools (defaults 10,000 and 2,000),
+choose 50/100/250/500/1,000 events per second or a custom positive integer, and
+select **Start Generator**. Custom rates above 1,000 events/sec show a resource
+warning but remain selectable. The zone is fixed to `ZONE_1`.
+
+The page refreshes status every second and displays simulation ID, target/actual
+publication rate, generated/published events, configured pools, and six population
+diagnostics. Start/configuration are disabled during active runs; Stop waits for
+the current batch and Kafka drain. Stopped or failed runs retain their statistics.
+Reloading the page reconnects to the current run. Leaving the page stops status
+polling but keeps the generator running until Stop or application shutdown.
+
+| Method | Endpoint | Result |
+| --- | --- | --- |
+| POST | `/api/v2/generator/start` | 202 with fresh run status; 409 if already active, 422 for invalid configuration, 503 if producer startup fails. |
+| POST | `/api/v2/generator/stop` | 200 with final status; inspect `status` and `last_error` because drain failures return ERROR. Repeated Stop is safe. |
+| GET | `/api/v2/generator/status` | Typed runtime status and diagnostics, including initial zero values before the first run. |
+
+Start requires all three positive integer settings and rejects unknown fields:
+
+```bash
+curl -sS -X POST http://localhost:8000/api/v2/generator/start \
+  -H 'Content-Type: application/json' \
+  -d '{"user_count":10000,"driver_count":2000,"target_events_per_second":250}'
+curl -sS http://localhost:8000/api/v2/generator/status
+curl -sS -X POST http://localhost:8000/api/v2/generator/stop
+```
+
+Status failures retain the last diagnostics and offer retry. A failed control
+request triggers a status refresh before another Start; it can have succeeded
+on the server even when the browser did not receive a response. Older polling
+responses cannot overwrite a newer control result. No transactional database is
+used; process restart clears runtime state while stored events remain.
+
+Run Generator browser checks against a stopped generator:
+
+```bash
+docker compose --profile web --profile e2e build frontend-e2e
+docker compose --profile web --profile e2e run --rm --no-deps frontend-e2e \
+  npm run test:e2e -- generator.spec.js
+```
+
+The live test creates two finite runs at 50 events/sec and verifies their exact
+Pinot row counts. Other Generator browser scenarios use intercepted responses.
+Phase 4 results are recorded in [docs/v2-step-4-verification.md](docs/v2-step-4-verification.md).
+
+### Pinot analytical queries
+
+`backend/app/queries/operations.py` defines the v2 SQL, and
+`OperationsAnalytics` executes six queries concurrently and parses typed results.
+It accepts a simulation ID and captures one epoch-millisecond cutoff for the
+whole read. Queries filter that run, `ZONE_1`, and events at or before the cutoff.
+Different queries can briefly observe different ingestion progress; this is not
+a transactional snapshot.
+
+| Result | Definition |
+| --- | --- |
+| Recent ride activity | Requested/accepted/cancelled/completed event counts over the last 60 seconds. |
+| Latest driver state | Latest driver event over the whole run; waiting, assigned, connected, disconnected, online, and observed counts. |
+| Active users | Users whose latest ride event is requested or accepted, over the whole run. |
+| Observed users | Exact distinct non-null user IDs observed in the run. |
+| Ride history | Four lifecycle counts per minute over the last hour. |
+| Ingested event rate | All ingested event counts divided by 10 per 10-second bucket over the last ten minutes. |
+
+Current-state queries have no lower time bound: an accepted ride or assigned
+driver does not disappear simply because its last transition is over an hour
+old. Missing ride categories are zero; empty runs return zero counts and empty
+time series. Time series contain observed buckets only. The first/last buckets
+can be partial, and their rate still uses the fixed ten-second denominator.
+This is ingestion-visible event-time throughput, distinct from the generator's
+rolling publication rate.
+
+The installed Pinot 1.5.1 rejected the plan's `ARG_MAX(timestamp, sequence, type)`
+signature. Latest-state queries use
+[`LASTWITHTIME`](https://docs.pinot.apache.org/release-1.1.0/configuration-reference/functions/lastwithtime)
+on `sequence_number`. The generator guarantees increasing per-run sequences and
+non-regressing timestamps, so this resolves timestamp ties and preserves the
+intended state ordering. Imported events must honor that contract; arbitrary
+sequences with regressing timestamps do not represent valid simulation runs.
+
+The service enables `useMultistageEngine=true` and `enableNullHandling=true`
+per query. Both worked on the running cluster without infrastructure changes.
+v1 queries retain their original request options. Broker errors, partial results,
+missing server responses, group trimming, and join/window limit truncation are
+errors rather than zero metrics. SQL builders validate run IDs before interpolation.
+
+Driver `disconnected` counts only drivers observed to disconnect. Drivers that
+never connected have no event; phase 6 derives the complete offline population
+from immutable driver-pool metadata minus Pinot-derived online drivers.
+
+Verify known event sequences against real Pinot:
+
+```bash
+docker compose --profile api build backend
+docker compose --profile api run --rm --no-deps backend python -m pytest -q
+docker compose --profile api run --rm --no-deps backend python scripts/verify-operations-analytics.py
+```
+
+The live script appends 21 events across two unique fixture runs. It checks null
+IDs, timestamp ties, old active state, future exclusion, time buckets, isolation,
+empty runs, and reconciliation with the application's stopped simulation when
+available. It never writes v1 snapshots or changes the application's generator.
+Phase 5 results are recorded in [docs/v2-step-5-verification.md](docs/v2-step-5-verification.md).
 
 ## Repository structure
 
@@ -541,12 +649,15 @@ After startup, run all provisioning, backend, frontend, ingestion, and browser c
 bash scripts/verify.sh
 ```
 
-The runner builds the current code, starts the web application, runs the automated
+The runner provisions v2 resources, builds the current code, starts the web application, runs the automated
 tests and dependency consistency check, verifies a manually published Kafka event,
 verifies an API submission, and runs Chromium tests. It stops at the first failure.
-The live checks add four snapshots to the selected stack: one manual event, one
+Run verification while the generator is stopped. The live checks add four v1
+snapshots to the selected stack: one manual event, one
 API submission, and two Settings submissions. Each browser submission increments
-online drivers and preserves the other four values. Use a separate Compose project
+online drivers and preserves the other four values. Generator browser checks
+also append two finite v2 runs; event counts depend on test duration. Analytical
+verification adds another 21 isolated v2 fixture events. Use a separate Compose project
 and alternate ports when verifying without modifying existing analytical data.
 
 Acceptance coverage, clean-start and restart checks, and history-boundary results

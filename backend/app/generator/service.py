@@ -1,4 +1,4 @@
-"""Single-process generator lifecycle; API controls are added separately."""
+"""Single-process generator lifecycle owned by the FastAPI application."""
 import asyncio
 from collections import deque
 from collections.abc import Callable

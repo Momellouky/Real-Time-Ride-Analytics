@@ -14,15 +14,21 @@ class PinotClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def query(self, sql: str) -> list[dict]:
+    async def query(self, sql: str, *, options: dict[str, str] | None = None) -> list[dict]:
         try:
-            response = await self._client.post(self._url, json={"sql": sql})
+            body = {'sql': sql}
+            if options:
+                body['queryOptions'] = ';'.join(f'{key}={value}' for key, value in options.items())
+            response = await self._client.post(self._url, json=body)
             response.raise_for_status()
             payload = response.json()
             if not isinstance(payload, dict):
                 raise ValueError("Broker response must be an object")
             if payload.get("exceptions") or payload.get("partialResult"):
                 raise ValueError("Broker returned query exceptions or partial results")
+            if any(payload.get(flag) for flag in ('numGroupsLimitReached', 'groupsTrimmed',
+                                                  'maxRowsInJoinReached', 'maxRowsInWindowReached')):
+                raise ValueError('Broker returned truncated analytical results')
             queried = payload.get("numServersQueried")
             responded = payload.get("numServersResponded")
             if queried is not None and responded is not None and queried != responded:

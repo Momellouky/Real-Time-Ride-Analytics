@@ -12,12 +12,13 @@ function errorMessage(body, fallback) {
 }
 
 async function request(path, options = {}) {
+  const { timeout = 15000, ...fetchOptions } = options;
   let response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
-      ...options, signal: options.signal
-        ? AbortSignal.any([options.signal, AbortSignal.timeout(15000)])
-        : AbortSignal.timeout(15000),
+      ...fetchOptions, signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(timeout)])
+        : AbortSignal.timeout(timeout),
     });
   } catch {
     throw new Error('Unable to reach the service. Check your connection and try again.');
@@ -37,3 +38,10 @@ export const getDashboard = (signal) => request('/api/dashboard?zone_id=ZONE_1&w
 export const updateMetrics = (payload) => request('/api/metrics', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
 });
+
+export const getGeneratorStatus = (signal) => request('/api/v2/generator/status', { signal });
+export const startGenerator = (payload) => request('/api/v2/generator/start', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload), timeout: 30000,
+});
+export const stopGenerator = () => request('/api/v2/generator/stop', { method: 'POST', timeout: 30000 });

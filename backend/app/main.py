@@ -9,6 +9,7 @@ from app.config import Settings
 from app.services.pinot_client import PinotClient, PinotQueryError
 from app.services.kafka_producer import MetricsKafkaProducer, KafkaPublishError
 from app.generator.service import GeneratorService
+from app.api.generator import router as generator_router
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   lifespan=lifespan)
     app.include_router(router)
     app.include_router(dashboard_router)
+    app.include_router(generator_router)
 
     @app.exception_handler(KafkaPublishError)
     async def handle_kafka_error(request: Request, exc: KafkaPublishError):
