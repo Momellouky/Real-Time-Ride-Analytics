@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Implementation Plan — Real-Time Ride Analytics with Apache Pinot</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #667085;
+      --border: #e4e7ec;
+      --accent: #111827;
+      --soft: #f2f4f7;
+      --code: #101828;
+      --goodbg: #ecfdf3;
+      --warnbg: #fffaeb;
+      --infobg: #eff8ff;
+      --dangerbg: #fef3f2;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.62;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 42px 24px 80px;
+    }
+    .hero {
+      background: linear-gradient(135deg, #fff, #f3f4f6);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 38px;
+      margin-bottom: 24px;
+    }
+    h1, h2, h3, h4 { color: var(--accent); line-height: 1.25; }
+    h1 { font-size: 2.25rem; margin: 0 0 10px; }
+    h2 { font-size: 1.55rem; margin: 0 0 16px; }
+    h3 { margin-top: 24px; margin-bottom: 10px; }
+    h4 { margin-top: 20px; margin-bottom: 8px; }
+    p { margin: 10px 0; }
+    .subtitle { color: var(--muted); max-width: 900px; font-size: 1.05rem; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+    .pill {
+      border: 1px solid var(--border);
+      background: var(--soft);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: .86rem;
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      margin: 20px 0;
+    }
+    .toc ol { columns: 2; column-gap: 36px; }
+    .toc a { color: #344054; text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: .92em;
+    }
+    pre {
+      background: var(--code);
+      color: #eaecf0;
+      padding: 18px;
+      border-radius: 10px;
+      overflow-x: auto;
+      line-height: 1.48;
+      font-size: .9rem;
+      border: 1px solid #344054;
+    }
+    .file {
+      display: inline-block;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      background: #eef2f6;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 7px;
+      margin: 2px 0;
+      font-size: .88rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: .94rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--soft); }
+    .callout {
+      border-left: 4px solid #98a2b3;
+      background: #fafafa;
+      padding: 13px 16px;
+      border-radius: 6px;
+      margin: 14px 0;
+    }
+    .good { border-color: #12b76a; background: var(--goodbg); }
+    .warn { border-color: #f79009; background: var(--warnbg); }
+    .info { border-color: #2e90fa; background: var(--infobg); }
+    .danger { border-color: #f04438; background: var(--dangerbg); }
+    .phase {
+      display: grid;
+      grid-template-columns: 70px 1fr;
+      gap: 16px;
+      align-items: start;
+      margin: 16px 0;
+    }
+    .phase-num {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: #111827;
+      color: #fff;
+      font-weight: 700;
+    }
+    ul, ol { padding-left: 22px; }
+    .grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      background: #fcfcfd;
+    }
+    .small { color: var(--muted); font-size: .9rem; }
+    .checklist li { margin: 5px 0; }
+    .tree {
+      white-space: pre;
+      overflow-x: auto;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      padding: 16px;
+      border-radius: 10px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: .9rem;
+    }
+    .footer {
+      text-align: center;
+      color: var(--muted);
+      margin-top: 32px;
+      font-size: .88rem;
+    }
+    @media (max-width: 760px) {
+      .toc ol { columns: 1; }
+      .phase { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <h1>Full Implementation Plan</h1>
+    <p class="subtitle">
+      Real-Time Ride Analytics Demo with Vue 3, FastAPI, Kafka, and Apache Pinot.
+      This document is derived from the approved PRD and is intended to be executable as a development blueprint.
+    </p>
+    <div class="meta">
+      <span class="pill">Target: local demo</span>
+      <span class="pill">Pinot: 1.5.1-compatible approach</span>
+      <span class="pill">Kafka → Pinot REALTIME ingestion</span>
+      <span class="pill">Dashboard polling: 2s default</span>
+      <span class="pill">Single zone: ZONE_1</span>
+    </div>
+  </header>
+
+  <section class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#summary">Implementation summary</a></li>
+      <li><a href="#architecture">Final architecture</a></li>
+      <li><a href="#repo">Repository structure</a></li>
+      <li><a href="#phases">Implementation phases</a></li>
+      <li><a href="#infra">Local infrastructure</a></li>
+      <li><a href="#kafka">Kafka setup</a></li>
+      <li><a href="#pinot-schema">Pinot schema</a></li>
+      <li><a href="#pinot-table">Pinot REALTIME table</a></li>
+      <li><a href="#pinot-create">Creating Pinot resources</a></li>
+      <li><a href="#pinot-queries">Pinot SQL queries</a></li>
+      <li><a href="#backend">FastAPI backend</a></li>
+      <li><a href="#producer">Kafka producer hot path</a></li>
+      <li><a href="#pinot-client">Pinot query client hot path</a></li>
+      <li><a href="#api">API endpoints</a></li>
+      <li><a href="#frontend">Vue frontend</a></li>
+      <li><a href="#polling">Polling and charts</a></li>
+      <li><a href="#validation">Validation rules</a></li>
+      <li><a href="#testing">Testing strategy</a></li>
+      <li><a href="#debug">Debugging workflow</a></li>
+      <li><a href="#definition">Definition of done</a></li>
+    </ol>
+  </section>
+
+  <section id="summary">
+    <h2>1. Implementation summary</h2>
+    <p>
+      The application stores no mutable business row in a traditional database. Every settings submission becomes
+      an immutable, timestamped snapshot event. Kafka transports the event; Pinot consumes it and stores the historical
+      sequence. The latest event acts as the current state.
+    </p>
+    <div class="callout good">
+      <strong>Key decision:</strong> the frontend sends all five metric values on each write. FastAPI never fills missing
+      metrics by querying Pinot. Pinot is queried only for reads and for initializing the frontend after page load.
+    </div>
+    <p>The implementation should be completed in this order:</p>
+    <ol>
+      <li>Run Kafka + Pinot locally.</li>
+      <li>Create Kafka topic.</li>
+      <li>Create Pinot schema and REALTIME table.</li>
+      <li>Manually produce a test Kafka event and verify Pinot ingestion.</li>
+      <li>Build FastAPI Pinot query client.</li>
+      <li>Build FastAPI Kafka producer and write endpoint.</li>
+      <li>Build current/history APIs.</li>
+      <li>Build Vue Settings page.</li>
+      <li>Build Vue Dashboard page with polling and charts.</li>
+      <li>Add automated tests and developer documentation.</li>
+    </ol>
+  </section>
+
+  <section id="architecture">
+    <h2>2. Final architecture</h2>
+    <pre><code>                       WRITE PATH
+┌───────────────────┐
+│ Vue Settings Page │
+│ local metric store│
+└─────────┬─────────┘
+          │ POST /api/metrics
+          │ full snapshot
+          ▼
+┌───────────────────┐
+│     FastAPI       │
+│ Pydantic + rules  │
+└─────────┬─────────┘
+          │ JSON Kafka event
+          ▼
+┌───────────────────┐
+│ Kafka topic       │
+│ ride-metrics-     │
+│ snapshots         │
+└─────────┬─────────┘
+          │ Pinot Kafka consumer
+          ▼
+┌───────────────────┐
+│ Apache Pinot      │
+│ ride_metrics      │
+│ REALTIME table    │
+└───────────────────┘
+
+
+                       READ PATH
+┌───────────────────┐
+│ Vue Dashboard     │
+│ polls every ~2 s  │
+└─────────┬─────────┘
+          │ GET /api/dashboard
+          ▼
+┌───────────────────┐
+│ FastAPI           │
+│ Pinot HTTP client │
+└─────────┬─────────┘
+          │ POST /query/sql
+          ▼
+┌───────────────────┐
+│ Pinot Broker      │
+└───────────────────┘</code></pre>
+  </section>
+
+  <section id="repo">
+    <h2>3. Recommended repository structure</h2>
+    <div class="tree">ride-analytics-demo/
+├── README.md
+├── .env.example
+├── docker-compose.yml
+│
+├── infra/
+│   ├── kafka/
+│   │   └── create-topic.sh
+│   └── pinot/
+│       ├── ride-metrics-schema.json
+│       ├── ride-metrics-realtime-table.json
+│       ├── create-table.sh
+│       └── sample-event.json
+│
+├── backend/
+│   ├── pyproject.toml
+│   ├── Dockerfile
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── config.py
+│   │   ├── api/
+│   │   │   └── metrics.py
+│   │   ├── models/
+│   │   │   └── metrics.py
+│   │   ├── services/
+│   │   │   ├── kafka_producer.py
+│   │   │   └── pinot_client.py
+│   │   └── domain/
+│   │       └── validation.py
+│   └── tests/
+│       ├── test_validation.py
+│       ├── test_metrics_api.py
+│       └── test_pinot_client.py
+│
+└── frontend/
+    ├── package.json
+    ├── vite.config.js
+    ├── Dockerfile
+    └── src/
+        ├── main.js
+        ├── router/
+        │   └── index.js
+        ├── stores/
+        │   └── metrics.js
+        ├── services/
+        │   └── api.js
+        ├── views/
+        │   ├── DashboardView.vue
+        │   └── SettingsView.vue
+        └── components/
+            ├── MetricCard.vue
+            ├── MetricChart.vue
+            └── MetricInput.vue</div>
+  </section>
+
+  <section id="phases">
+    <h2>4. Implementation phases</h2>
+    <div class="phase"><div class="phase-num">1</div><div><h3>Infrastructure and data path</h3><p>Start Kafka and Pinot, create the topic, schema, and table, then verify one manually produced event becomes queryable.</p><strong>Exit criterion:</strong> <code>SELECT * FROM ride_metrics ORDER BY event_timestamp DESC LIMIT 1</code> returns the manual event.</div></div>
+    <div class="phase"><div class="phase-num">2</div><div><h3>Backend read path</h3><p>Implement Pinot HTTP querying, response parsing, current snapshot endpoint, and one-hour history endpoint.</p><strong>Exit criterion:</strong> curl against FastAPI returns real data read from Pinot.</div></div>
+    <div class="phase"><div class="phase-num">3</div><div><h3>Backend write path</h3><p>Implement full snapshot validation, event enrichment, Kafka publishing, and errors.</p><strong>Exit criterion:</strong> POSTing metrics produces a new row visible in Pinot.</div></div>
+    <div class="phase"><div class="phase-num">4</div><div><h3>Settings UI</h3><p>Initialize state from current metrics, validate inputs, submit a complete snapshot, and display success/error feedback.</p></div></div>
+    <div class="phase"><div class="phase-num">5</div><div><h3>Dashboard UI</h3><p>Render five cards and five last-hour line charts. Poll backend every two seconds.</p></div></div>
+    <div class="phase"><div class="phase-num">6</div><div><h3>Tests, documentation, polish</h3><p>Add automated tests, health checks, startup instructions, and debugging commands.</p></div></div>
+  </section>
+
+  <section id="infra">
+    <h2>5. Local infrastructure</h2>
+    <p>
+      Keep infrastructure explicit rather than relying permanently on Pinot QuickStart. This makes the Kafka → Pinot
+      relationship visible and easier to debug. It is still fine to use QuickStart during initial exploration.
+    </p>
+    <h3>5.1 Environment variables</h3>
+    <pre><code># .env.example
+PINOT_CONTROLLER_URL=http://localhost:9000
+PINOT_BROKER_URL=http://localhost:8099
+
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+KAFKA_TOPIC=ride-metrics-snapshots
+
+ZONE_ID=ZONE_1
+DASHBOARD_POLL_INTERVAL_MS=2000</code></pre>
+    <h3>5.2 Docker Compose strategy</h3>
+    <p>
+      Use Docker Compose for Kafka and Pinot. The exact Kafka image can be swapped if desired; the application contract is
+      simply that the broker is reachable internally as <code>kafka:9092</code> and externally as <code>localhost:9092</code>.
+      Pinot's table config must use the internal Docker hostname.
+    </p>
+    <div class="callout info">
+      <strong>Important networking rule:</strong> inside the Pinot container, <code>localhost:9092</code> means the Pinot
+      container itself, not Kafka. The Pinot stream config should therefore use <code>kafka:9092</code>.
+    </div>
+  </section>
+
+  <section id="kafka">
+    <h2>6. Kafka setup</h2>
+    <h3>6.1 Topic</h3>
+    <p>Topic name:</p>
+    <pre><code>ride-metrics-snapshots</code></pre>
+    <p>For this demo use one partition. One partition makes event ordering obvious and is sufficient for one zone.</p>
+    <pre><code>docker exec -it kafka \
+  kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --create \
+  --if-not-exists \
+  --topic ride-metrics-snapshots \
+  --partitions 1 \
+  --replication-factor 1</code></pre>
+
+    <h3>6.2 Inspect topic</h3>
+    <pre><code>docker exec -it kafka \
+  kafka-topics.sh \
+  --bootstrap-server localhost:9092 \
+  --describe \
+  --topic ride-metrics-snapshots</code></pre>
+
+    <h3>6.3 Manual event smoke test</h3>
+    <pre><code>docker exec -i kafka \
+  kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic ride-metrics-snapshots &lt;&lt;'EOF'
+{"event_id":"manual-1","event_timestamp":1760164200000,"zone_id":"ZONE_1","online_drivers":20,"ride_requests":40,"accepted_requests":25,"cancelled_requests":5,"waiting_drivers":8}
+EOF</code></pre>
+    <p>The timestamp is stored as epoch milliseconds, which simplifies Pinot filtering and time functions.</p>
+  </section>
+
+  <section id="pinot-schema">
+    <h2>7. Pinot schema</h2>
+    <p>File: <span class="file">infra/pinot/ride-metrics-schema.json</span></p>
+    <pre><code>{
+  "schemaName": "ride_metrics",
+  "enableColumnBasedNullHandling": true,
+  "dimensionFieldSpecs": [
+    {"name": "event_id", "dataType": "STRING", "notNull": true},
+    {"name": "zone_id", "dataType": "STRING", "notNull": true}
+  ],
+  "metricFieldSpecs": [
+    {"name": "online_drivers", "dataType": "INT", "notNull": true},
+    {"name": "ride_requests", "dataType": "INT", "notNull": true},
+    {"name": "accepted_requests", "dataType": "INT", "notNull": true},
+    {"name": "cancelled_requests", "dataType": "INT", "notNull": true},
+    {"name": "waiting_drivers", "dataType": "INT", "notNull": true}
+  ],
+  "dateTimeFieldSpecs": [
+    {
+      "name": "event_timestamp",
+      "dataType": "LONG",
+      "format": "1:MILLISECONDS:EPOCH",
+      "granularity": "1:MILLISECONDS"
+    }
+  ]
+}</code></pre>
+    <h3>Why this shape?</h3>
+    <ul>
+      <li><code>event_id</code> is an event identifier.</li>
+      <li><code>zone_id</code> is a filterable dimension.</li>
+      <li>The five numeric values are Pinot metric fields.</li>
+      <li><code>event_timestamp</code> is a datetime field used for ordering and rolling one-hour filters.</li>
+    </ul>
+  </section>
+
+  <section id="pinot-table">
+    <h2>8. Pinot REALTIME table configuration</h2>
+    <p>File: <span class="file">infra/pinot/ride-metrics-realtime-table.json</span></p>
+    <pre><code>{
+  "tableName": "ride_metrics",
+  "tableType": "REALTIME",
+  "segmentsConfig": {
+    "timeColumnName": "event_timestamp",
+    "schemaName": "ride_metrics",
+    "replicasPerPartition": "1"
+  },
+  "tenants": {},
+  "tableIndexConfig": {
+    "loadMode": "MMAP",
+    "invertedIndexColumns": ["zone_id"],
+    "rangeIndexColumns": ["event_timestamp"],
+    "streamConfigs": {
+      "streamType": "kafka",
+      "stream.kafka.topic.name": "ride-metrics-snapshots",
+      "stream.kafka.decoder.class.name": "org.apache.pinot.plugin.inputformat.json.JSONMessageDecoder",
+      "stream.kafka.consumer.factory.class.name": "org.apache.pinot.plugin.stream.kafka30.KafkaConsumerFactory",
+      "stream.kafka.broker.list": "kafka:9092",
+      "stream.kafka.consumer.prop.auto.offset.reset": "smallest",
+      "realtime.segment.flush.threshold.rows": "0",
+      "realtime.segment.flush.threshold.time": "24h",
+      "realtime.segment.flush.threshold.segment.size": "50M"
+    }
+  },
+  "metadata": {"customConfigs": {}}
+}</code></pre>
+
+    <div class="callout warn">
+      <strong>Compatibility note:</strong> Pinot documentation also shows newer stream configuration under
+      <code>ingestionConfig.streamIngestionConfig</code>. If your 1.5.1 image rejects the legacy placement above,
+      move the same stream keys into that structure. The project should keep the final working JSON committed to Git.
+    </div>
+
+    <h3>Indexes</h3>
+    <ul>
+      <li><strong>Inverted index on <code>zone_id</code>:</strong> supports zone filtering.</li>
+      <li><strong>Range index on <code>event_timestamp</code>:</strong> supports rolling time-range filters.</li>
+      <li>No star-tree, bloom filter, or advanced pre-aggregation is needed in v1.</li>
+    </ul>
+  </section>
+
+  <section id="pinot-create">
+    <h2>9. Creating the Pinot schema and table</h2>
+    <h3>9.1 Recommended: version-controlled CLI</h3>
+    <pre><code>docker exec -it pinot-controller \
+  /opt/pinot/bin/pinot-admin.sh AddTable \
+  -schemaFile /config/ride-metrics-schema.json \
+  -tableConfigFile /config/ride-metrics-realtime-table.json \
+  -controllerHost pinot-controller \
+  -controllerPort 9000 \
+  -exec</code></pre>
+
+    <p>Alternative using a disposable Pinot container on the project network:</p>
+    <pre><code>docker run --rm \
+  --network ride-analytics-network \
+  -v "$PWD/infra/pinot:/config" \
+  apachepinot.docker.scarf.sh/apachepinot/pinot:1.5.1 \
+  AddTable \
+  -schemaFile /config/ride-metrics-schema.json \
+  -tableConfigFile /config/ride-metrics-realtime-table.json \
+  -controllerHost pinot-controller \
+  -controllerPort 9000 \
+  -exec</code></pre>
+
+    <h3>9.2 Manual UI route</h3>
+    <ol>
+      <li>Open <code>http://localhost:9000</code>.</li>
+      <li>Inspect tables/schema in Data Explorer.</li>
+      <li>Use <code>http://localhost:9000/help</code> for the Controller Swagger/admin API.</li>
+      <li>Use Query Console for SQL smoke tests.</li>
+    </ol>
+    <div class="callout good">
+      Use the UI for exploration/debugging, but keep schema/table JSON files as the source of truth.
+    </div>
+  </section>
+
+  <section id="pinot-queries">
+    <h2>10. Pinot SQL queries</h2>
+    <h3>10.1 Latest snapshot</h3>
+    <pre><code>SELECT
+  event_id,
+  event_timestamp,
+  zone_id,
+  online_drivers,
+  ride_requests,
+  accepted_requests,
+  cancelled_requests,
+  waiting_drivers
+FROM ride_metrics
+WHERE zone_id = 'ZONE_1'
+ORDER BY event_timestamp DESC
+LIMIT 1</code></pre>
+
+    <h3>10.2 Last-hour history</h3>
+    <pre><code>SELECT
+  event_timestamp,
+  online_drivers,
+  ride_requests,
+  accepted_requests,
+  cancelled_requests,
+  waiting_drivers
+FROM ride_metrics
+WHERE zone_id = 'ZONE_1'
+  AND event_timestamp &gt;= ago('PT1H')
+ORDER BY event_timestamp ASC
+LIMIT 5000</code></pre>
+
+    <p>
+      The demo produces low-volume, human-triggered snapshots, so raw points are preferable to premature aggregation.
+    </p>
+
+    <h3>10.3 Smoke tests</h3>
+    <pre><code>SELECT COUNT(*) FROM ride_metrics;
+
+SELECT *
+FROM ride_metrics
+ORDER BY event_timestamp DESC
+LIMIT 10;
+
+SELECT MIN(event_timestamp), MAX(event_timestamp)
+FROM ride_metrics;</code></pre>
+
+    <h3>10.4 Direct Broker API</h3>
+    <pre><code>curl -X POST http://localhost:8099/query/sql \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sql": "SELECT * FROM ride_metrics ORDER BY event_timestamp DESC LIMIT 10"
+  }'</code></pre>
+  </section>
+
+  <section id="backend">
+    <h2>11. FastAPI backend</h2>
+    <h3>11.1 Dependencies</h3>
+    <pre><code>fastapi
+uvicorn[standard]
+pydantic-settings
+httpx
+aiokafka
+pytest
+pytest-asyncio</code></pre>
+
+    <h3>11.2 Configuration</h3>
+    <pre><code>from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    pinot_broker_url: str = "http://localhost:8099"
+    kafka_bootstrap_servers: str = "localhost:9092"
+    kafka_topic: str = "ride-metrics-snapshots"
+    zone_id: str = "ZONE_1"
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+    )
+
+
+settings = Settings()</code></pre>
+
+    <h3>11.3 Models and business validation</h3>
+    <pre><code>from pydantic import BaseModel, Field, model_validator
+
+
+class MetricsSnapshotInput(BaseModel):
+    zone_id: str
+    online_drivers: int = Field(ge=0)
+    ride_requests: int = Field(ge=0)
+    accepted_requests: int = Field(ge=0)
+    cancelled_requests: int = Field(ge=0)
+    waiting_drivers: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_business_rules(self):
+        if self.accepted_requests + self.cancelled_requests &gt; self.ride_requests:
+            raise ValueError(
+                "accepted_requests + cancelled_requests must be &lt;= ride_requests"
+            )
+
+        if self.waiting_drivers &gt; self.online_drivers:
+            raise ValueError(
+                "waiting_drivers must be &lt;= online_drivers"
+            )
+
+        if self.zone_id != "ZONE_1":
+            raise ValueError("Only ZONE_1 is supported")
+
+        return self
+
+
+class MetricsEvent(MetricsSnapshotInput):
+    event_id: str
+    event_timestamp: int</code></pre>
+  </section>
+
+  <section id="producer">
+    <h2>12. Hot code region: publishing Kafka events</h2>
+    <p>Create one Kafka producer at application startup and reuse it.</p>
+    <pre><code>import json
+from aiokafka import AIOKafkaProducer
+
+
+class MetricsKafkaProducer:
+    def __init__(self, bootstrap_servers: str, topic: str):
+        self._bootstrap_servers = bootstrap_servers
+        self._topic = topic
+        self._producer: AIOKafkaProducer | None = None
+
+    async def start(self) -&gt; None:
+        self._producer = AIOKafkaProducer(
+            bootstrap_servers=self._bootstrap_servers,
+            value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+            acks="all",
+        )
+        await self._producer.start()
+
+    async def stop(self) -&gt; None:
+        if self._producer:
+            await self._producer.stop()
+
+    async def publish(self, event: dict) -&gt; None:
+        if not self._producer:
+            raise RuntimeError("Kafka producer is not started")
+
+        await self._producer.send_and_wait(
+            self._topic,
+            value=event,
+        )</code></pre>
+
+    <h3>FastAPI lifespan</h3>
+    <pre><code>from contextlib import asynccontextmanager
+from fastapi import FastAPI
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await kafka.start()
+    app.state.kafka = kafka
+    app.state.pinot = pinot
+    yield
+    await kafka.stop()
+    await pinot.close()
+
+app = FastAPI(lifespan=lifespan)</code></pre>
+
+    <h3>Write endpoint</h3>
+    <pre><code>from time import time
+from uuid import uuid4
+
+from fastapi import APIRouter, HTTPException, Request
+
+router = APIRouter(prefix="/api/metrics", tags=["metrics"])
+
+
+@router.post("", status_code=202)
+async def update_metrics(payload: MetricsSnapshotInput, request: Request):
+    event = MetricsEvent(
+        event_id=str(uuid4()),
+        event_timestamp=int(time() * 1000),
+        **payload.model_dump(),
+    )
+
+    try:
+        await request.app.state.kafka.publish(event.model_dump())
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to publish metrics event to Kafka",
+        ) from exc
+
+    return {
+        "status": "accepted",
+        "event_id": event.event_id,
+        "event_timestamp": event.event_timestamp,
+    }</code></pre>
+
+    <div class="callout warn">
+      <code>202 Accepted</code> means the event was successfully published to Kafka. Pinot ingestion is asynchronous,
+      so the new value may appear on the next dashboard poll rather than in the same request.
+    </div>
+  </section>
+
+  <section id="pinot-client">
+    <h2>13. Hot code region: querying Apache Pinot</h2>
+    <p>Use the Pinot Broker HTTP endpoint <code>/query/sql</code> and centralize response parsing.</p>
+    <pre><code>import httpx
+
+
+class PinotQueryError(RuntimeError):
+    pass
+
+
+class PinotClient:
+    def __init__(self, broker_url: str):
+        self._url = f"{broker_url.rstrip('/')}/query/sql"
+        self._client = httpx.AsyncClient(timeout=3.0)
+
+    async def close(self) -&gt; None:
+        await self._client.aclose()
+
+    async def query(self, sql: str) -&gt; list[dict]:
+        response = await self._client.post(
+            self._url,
+            json={"sql": sql},
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+        exceptions = payload.get("exceptions") or []
+        if exceptions:
+            raise PinotQueryError(str(exceptions))
+
+        result_table = payload.get("resultTable")
+        if not result_table:
+            return []
+
+        columns = result_table["dataSchema"]["columnNames"]
+        rows = result_table.get("rows", [])
+
+        return [
+            dict(zip(columns, row, strict=True))
+            for row in rows
+        ]</code></pre>
+
+    <h3>Query constants</h3>
+    <pre><code>CURRENT_SQL = """
+SELECT
+  event_id,
+  event_timestamp,
+  zone_id,
+  online_drivers,
+  ride_requests,
+  accepted_requests,
+  cancelled_requests,
+  waiting_drivers
+FROM ride_metrics
+WHERE zone_id = 'ZONE_1'
+ORDER BY event_timestamp DESC
+LIMIT 1
+"""
+
+HISTORY_SQL = """
+SELECT
+  event_timestamp,
+  online_drivers,
+  ride_requests,
+  accepted_requests,
+  cancelled_requests,
+  waiting_drivers
+FROM ride_metrics
+WHERE zone_id = 'ZONE_1'
+  AND event_timestamp &gt;= ago('PT1H')
+ORDER BY event_timestamp ASC
+LIMIT 5000
+"""</code></pre>
+  </section>
+
+  <section id="api">
+    <h2>14. API endpoints</h2>
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>POST</td><td><code>/api/metrics</code></td><td>Publish one validated complete snapshot.</td></tr>
+        <tr><td>GET</td><td><code>/api/metrics/current</code></td><td>Get the newest snapshot, or zeros if none exist.</td></tr>
+        <tr><td>GET</td><td><code>/api/metrics/history</code></td><td>Get last-hour raw snapshot points.</td></tr>
+        <tr><td>GET</td><td><code>/api/dashboard</code></td><td>Recommended combined current + history payload.</td></tr>
+        <tr><td>GET</td><td><code>/health</code></td><td>Backend process health.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Zero state</h3>
+    <pre><code>ZERO_STATE = {
+    "zone_id": "ZONE_1",
+    "online_drivers": 0,
+    "ride_requests": 0,
+    "accepted_requests": 0,
+    "cancelled_requests": 0,
+    "waiting_drivers": 0,
+}</code></pre>
+
+    <h3>Combined dashboard endpoint</h3>
+    <pre><code>import asyncio
+
+@router.get("/dashboard")
+async def dashboard(request: Request):
+    pinot = request.app.state.pinot
+
+    current_rows, history_rows = await asyncio.gather(
+        pinot.query(CURRENT_SQL),
+        pinot.query(HISTORY_SQL),
+    )
+
+    current = current_rows[0] if current_rows else ZERO_STATE
+
+    return {
+        "current": current,
+        "history": history_rows,
+    }</code></pre>
+
+    <div class="callout good">
+      One combined dashboard call is preferable to five independent history calls. All five metrics are columns of the same snapshot row.
+    </div>
+  </section>
+
+  <section id="frontend">
+    <h2>15. Vue frontend implementation</h2>
+    <h3>15.1 Routes</h3>
+    <ul>
+      <li><code>/</code> — Dashboard</li>
+      <li><code>/settings</code> — Metrics Settings</li>
+    </ul>
+
+    <h3>15.2 Pinia metrics store</h3>
+    <pre><code>import { defineStore } from "pinia";
+import { ref } from "vue";
+import { getCurrentMetrics, updateMetrics } from "../services/api";
+
+export const useMetricsStore = defineStore("metrics", () =&gt; {
+  const onlineDrivers = ref(0);
+  const rideRequests = ref(0);
+  const acceptedRequests = ref(0);
+  const cancelledRequests = ref(0);
+  const waitingDrivers = ref(0);
+
+  function applySnapshot(snapshot) {
+    onlineDrivers.value = snapshot.online_drivers;
+    rideRequests.value = snapshot.ride_requests;
+    acceptedRequests.value = snapshot.accepted_requests;
+    cancelledRequests.value = snapshot.cancelled_requests;
+    waitingDrivers.value = snapshot.waiting_drivers;
+  }
+
+  async function initialize() {
+    applySnapshot(await getCurrentMetrics());
+  }
+
+  async function submit() {
+    return updateMetrics({
+      zone_id: "ZONE_1",
+      online_drivers: onlineDrivers.value,
+      ride_requests: rideRequests.value,
+      accepted_requests: acceptedRequests.value,
+      cancelled_requests: cancelledRequests.value,
+      waiting_drivers: waitingDrivers.value,
+    });
+  }
+
+  return {
+    onlineDrivers,
+    rideRequests,
+    acceptedRequests,
+    cancelledRequests,
+    waitingDrivers,
+    initialize,
+    submit,
+  };
+});</code></pre>
+
+    <h3>15.3 API client</h3>
+    <pre><code>const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+
+export async function getCurrentMetrics() {
+  const response = await fetch(`${API_BASE}/api/metrics/current`);
+  if (!response.ok) throw new Error("Failed to load current metrics");
+  return response.json();
+}
+
+export async function updateMetrics(payload) {
+  const response = await fetch(`${API_BASE}/api/metrics`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body.detail ?? "Failed to update metrics");
+  }
+  return body;
+}
+
+export async function getDashboard() {
+  const response = await fetch(`${API_BASE}/api/dashboard`);
+  if (!response.ok) throw new Error("Failed to load dashboard");
+  return response.json();
+}</code></pre>
+
+    <h3>15.4 Settings input example</h3>
+    <pre><code>&lt;input
+  v-model.number="store.onlineDrivers"
+  type="number"
+  min="0"
+  step="1"
+/&gt;</code></pre>
+  </section>
+
+  <section id="polling">
+    <h2>16. Dashboard polling and charts</h2>
+    <h3>16.1 Polling loop</h3>
+    <pre><code>import { onMounted, onUnmounted, ref } from "vue";
+import { getDashboard } from "../services/api";
+
+const dashboard = ref(null);
+const error = ref(null);
+let timer = null;
+let isRefreshing = false;
+
+async function refresh() {
+  if (isRefreshing) return;
+
+  isRefreshing = true;
+  try {
+    dashboard.value = await getDashboard();
+    error.value = null;
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    isRefreshing = false;
+  }
+}
+
+onMounted(async () =&gt; {
+  await refresh();
+  timer = window.setInterval(refresh, 2000);
+});
+
+onUnmounted(() =&gt; {
+  if (timer) window.clearInterval(timer);
+});</code></pre>
+
+    <h3>16.2 Convert Pinot history into chart series</h3>
+    <pre><code>function toSeries(history, field) {
+  return history.map((row) =&gt; ({
+    x: row.event_timestamp,
+    y: row[field],
+  }));
+}</code></pre>
+
+    <p>
+      Each metric card should show the latest number above a line chart. The line joins submitted snapshot points in chronological order.
+    </p>
+  </section>
+
+  <section id="validation">
+    <h2>17. Validation rules</h2>
+    <table>
+      <thead><tr><th>Rule</th><th>Frontend</th><th>Backend</th></tr></thead>
+      <tbody>
+        <tr><td>Integer only</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>Non-negative</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>accepted + cancelled ≤ rides</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>waiting ≤ online drivers</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>All five values included</td><td>Yes</td><td>Required fields</td></tr>
+        <tr><td>Only ZONE_1</td><td>Fixed value</td><td>Reject others</td></tr>
+      </tbody>
+    </table>
+    <div class="callout danger">
+      Browser constraints are only UX. Backend validation is mandatory because the API can be called without Vue.
+    </div>
+  </section>
+
+  <section id="testing">
+    <h2>18. Testing strategy</h2>
+    <h3>18.1 Unit tests</h3>
+    <ul>
+      <li>All-zero snapshot is valid.</li>
+      <li>Negative metric fails.</li>
+      <li><code>accepted + cancelled == ride_requests</code> is valid.</li>
+      <li><code>accepted + cancelled &gt; ride_requests</code> fails.</li>
+      <li><code>waiting_drivers == online_drivers</code> is valid.</li>
+      <li><code>waiting_drivers &gt; online_drivers</code> fails.</li>
+      <li>Pinot tabular response maps correctly into dictionaries.</li>
+    </ul>
+
+    <h3>18.2 Backend API tests</h3>
+    <ul>
+      <li>Valid POST → 202 and one Kafka publish.</li>
+      <li>Invalid POST → 422 and zero Kafka publishes.</li>
+      <li>Kafka failure → 503.</li>
+      <li>No Pinot row → current endpoint returns zeros.</li>
+      <li>Dashboard endpoint returns current + history.</li>
+    </ul>
+
+    <h3>18.3 End-to-end smoke test</h3>
+    <ol>
+      <li>Start Kafka and Pinot.</li>
+      <li>POST a snapshot to FastAPI.</li>
+      <li>Consume the Kafka topic and verify the JSON.</li>
+      <li>Query Pinot until the new row appears.</li>
+      <li>Call <code>/api/dashboard</code>.</li>
+      <li>Verify the browser updates automatically.</li>
+    </ol>
+  </section>
+
+  <section id="debug">
+    <h2>19. Debugging workflow</h2>
+    <h3>19.1 Check Kafka</h3>
+    <pre><code>docker exec -it kafka \
+  kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic ride-metrics-snapshots \
+  --from-beginning</code></pre>
+
+    <h3>19.2 Check Pinot</h3>
+    <pre><code>SELECT COUNT(*) FROM ride_metrics;
+
+SELECT *
+FROM ride_metrics
+ORDER BY event_timestamp DESC
+LIMIT 10;</code></pre>
+
+    <h3>19.3 Kafka has events but Pinot is empty</h3>
+    <ul>
+      <li>Check the realtime table state in Controller UI.</li>
+      <li>Confirm topic name.</li>
+      <li>Confirm Pinot reaches <code>kafka:9092</code>.</li>
+      <li>Confirm JSON field names match schema names.</li>
+      <li>Inspect Pinot server logs for decoder/consumer errors.</li>
+      <li>Confirm Kafka offsets and <code>auto.offset.reset=smallest</code>.</li>
+    </ul>
+
+    <h3>19.4 Pinot has rows but Vue is stale</h3>
+    <ul>
+      <li>Query Broker directly.</li>
+      <li>Call FastAPI <code>/api/dashboard</code>.</li>
+      <li>Inspect browser network calls.</li>
+      <li>Verify CORS.</li>
+    </ul>
+
+    <h3>19.5 CORS</h3>
+    <pre><code>from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)</code></pre>
+  </section>
+
+  <section>
+    <h2>20. Performance choices</h2>
+    <div class="grid">
+      <div class="card"><h3>One dashboard HTTP call</h3><p>Current state plus all five histories are fetched together.</p></div>
+      <div class="card"><h3>Two Pinot queries</h3><p>Latest row and history query execute concurrently.</p></div>
+      <div class="card"><h3>One Kafka partition</h3><p>Simple ordering for a one-zone, low-volume demo.</p></div>
+      <div class="card"><h3>Raw history points</h3><p>No time bucketing required for manually submitted snapshots.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>21. Semantics of “current state”</h2>
+    <p>Pinot remains append-only. Changing a value creates a newer snapshot rather than updating the previous row:</p>
+    <pre><code>10:00 → online_drivers = 20
+10:05 → online_drivers = 30</code></pre>
+    <p>
+      The current state is therefore the values contained in the row with the newest <code>event_timestamp</code>.
+    </p>
+  </section>
+
+  <section>
+    <h2>22. Recommended first development session</h2>
+    <ol>
+      <li>Create the repository skeleton.</li>
+      <li>Start Kafka and Pinot 1.5.1.</li>
+      <li>Create the Kafka topic.</li>
+      <li>Add the Pinot schema JSON.</li>
+      <li>Add the Pinot REALTIME table JSON.</li>
+      <li>Create the table using <code>pinot-admin.sh AddTable</code>.</li>
+      <li>Produce one event manually.</li>
+      <li>Open the Pinot Query Console and query it.</li>
+    </ol>
+    <div class="callout good">
+      Do not start Vue until the Kafka → Pinot path works. That isolates the central technology the project is intended to teach.
+    </div>
+  </section>
+
+  <section id="definition">
+    <h2>23. Definition of done</h2>
+    <ul class="checklist">
+      <li>☐ Kafka and Pinot start locally.</li>
+      <li>☐ Topic <code>ride-metrics-snapshots</code> exists.</li>
+      <li>☐ Pinot <code>ride_metrics_REALTIME</code> consumes the topic.</li>
+      <li>☐ Manual Kafka event becomes queryable in Pinot.</li>
+      <li>☐ FastAPI publishes validated snapshots to Kafka.</li>
+      <li>☐ FastAPI queries Pinot Broker over <code>/query/sql</code>.</li>
+      <li>☐ Latest-state endpoint returns newest snapshot.</li>
+      <li>☐ Empty Pinot table yields zero state.</li>
+      <li>☐ History query returns only the previous hour.</li>
+      <li>☐ Settings page initializes from Pinot-backed current state.</li>
+      <li>☐ Settings page submits all five values.</li>
+      <li>☐ Dashboard renders five cards and five charts.</li>
+      <li>☐ Dashboard updates automatically by polling.</li>
+      <li>☐ New settings values appear without browser refresh.</li>
+      <li>☐ README documents startup, smoke tests, and troubleshooting.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>24. Technical references</h2>
+    <ul>
+      <li>Apache Pinot Kafka stream ingestion documentation.</li>
+      <li>Apache Pinot CLI / <code>pinot-admin.sh</code> documentation.</li>
+      <li>Apache Pinot Broker Query API: <code>POST /query/sql</code>.</li>
+      <li>Apache Pinot SQL reference for <code>ORDER BY</code> and <code>LIMIT</code>.</li>
+      <li>Apache Pinot <code>ago()</code> datetime function.</li>
+      <li>Apache Pinot Data Explorer and Controller admin UI.</li>
+    </ul>
+  </section>
+
+  <div class="footer">Implementation Plan — Real-Time Ride Analytics Demo</div>
+</main>
+</body>
+</html>

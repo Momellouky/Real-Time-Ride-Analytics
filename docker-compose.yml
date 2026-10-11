@@ -1,0 +1,107 @@
+name: ${COMPOSE_PROJECT_NAME:-ride-analytics}
+
+services:
+  kafka:
+    image: ${KAFKA_IMAGE:-apache/kafka:3.9.1}
+    ports:
+      - "127.0.0.1:${KAFKA_PORT:-9092}:29092"
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-ride-metrics-snapshots}
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: [CMD-SHELL, "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  pinot-zookeeper:
+    image: ${ZOOKEEPER_IMAGE:-zookeeper:3.9.3}
+    volumes:
+      - zookeeper-data:/data
+      - zookeeper-log:/datalog
+    healthcheck:
+      test: [CMD, zkServer.sh, status]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  pinot-controller:
+    image: ${PINOT_IMAGE:-apachepinot/pinot:1.5.1}
+    command: [StartController, -zkAddress, "pinot-zookeeper:2181", -dataDir, /var/pinot/controller]
+    environment:
+      JAVA_OPTS: -Dplugins.dir=/opt/pinot/plugins -Xms256m -Xmx512m
+    ports:
+      - "127.0.0.1:${PINOT_CONTROLLER_PORT:-9000}:9000"
+    volumes:
+      - controller-data:/var/pinot/controller
+      - ./infra/pinot:/config:ro
+    depends_on:
+      pinot-zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, "curl -fsS http://localhost:9000/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  pinot-broker:
+    image: ${PINOT_IMAGE:-apachepinot/pinot:1.5.1}
+    command: [StartBroker, -zkAddress, "pinot-zookeeper:2181"]
+    environment:
+      JAVA_OPTS: -Dplugins.dir=/opt/pinot/plugins -Xms256m -Xmx512m
+    ports:
+      - "127.0.0.1:${PINOT_BROKER_PORT:-8099}:8099"
+    depends_on:
+      pinot-controller:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, "curl -fsS http://localhost:8099/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  pinot-server:
+    image: ${PINOT_IMAGE:-apachepinot/pinot:1.5.1}
+    command: [StartServer, -zkAddress, "pinot-zookeeper:2181", -configFileName, /config/server.conf]
+    environment:
+      JAVA_OPTS: -Dplugins.dir=/opt/pinot/plugins -Xms256m -Xmx1g
+    volumes:
+      - server-data:/var/pinot/server
+      - ./infra/pinot:/config:ro
+    depends_on:
+      pinot-broker:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, "curl -fsS http://localhost:8097/health/readiness >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  kafka-data:
+  zookeeper-data:
+  zookeeper-log:
+  controller-data:
+  server-data:

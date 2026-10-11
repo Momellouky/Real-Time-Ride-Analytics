@@ -1,0 +1,10 @@
+{
+  "event_id": "manual-example",
+  "event_timestamp": 1791707400000,
+  "zone_id": "ZONE_1",
+  "online_drivers": 20,
+  "ride_requests": 40,
+  "accepted_requests": 25,
+  "cancelled_requests": 5,
+  "waiting_drivers": 8
+}

@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PRD — Real-Time Ride Analytics Demo with Apache Pinot</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --accent: #111827;
+      --soft: #f3f4f6;
+      --success: #065f46;
+      --warn: #92400e;
+      --code: #0f172a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    .hero {
+      background: linear-gradient(135deg, #ffffff 0%, #f3f4f6 100%);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 40px;
+      margin-bottom: 28px;
+    }
+    h1, h2, h3 { color: var(--accent); line-height: 1.25; }
+    h1 { margin: 0 0 12px; font-size: 2.2rem; }
+    h2 { margin-top: 0; font-size: 1.5rem; }
+    h3 { margin-bottom: 8px; font-size: 1.05rem; }
+    .subtitle {
+      color: var(--muted);
+      font-size: 1.05rem;
+      max-width: 850px;
+      margin: 0;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 24px;
+    }
+    .pill {
+      background: var(--soft);
+      border: 1px solid var(--border);
+      color: #374151;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.88rem;
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      margin-bottom: 22px;
+    }
+    ul, ol { padding-left: 22px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 4px;
+      font-size: 0.95rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--soft); }
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+    }
+    pre {
+      background: var(--code);
+      color: #e5e7eb;
+      border-radius: 10px;
+      padding: 16px;
+      overflow-x: auto;
+      line-height: 1.5;
+    }
+    .callout {
+      border-left: 4px solid #9ca3af;
+      background: #fafafa;
+      padding: 14px 16px;
+      margin: 14px 0;
+      border-radius: 6px;
+    }
+    .success {
+      border-left-color: #10b981;
+      background: #ecfdf5;
+    }
+    .warning {
+      border-left-color: #f59e0b;
+      background: #fffbeb;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 14px;
+    }
+    .metric-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      background: #fcfcfd;
+    }
+    .metric-card strong { display: block; margin-bottom: 4px; }
+    .small { color: var(--muted); font-size: 0.9rem; }
+    .toc a {
+      color: #374151;
+      text-decoration: none;
+    }
+    .toc a:hover { text-decoration: underline; }
+    .footer {
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.9rem;
+      margin-top: 36px;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <h1>Product Requirements Document</h1>
+      <p class="subtitle">
+        Real-Time Ride Analytics Demo — a hands-on learning project for Apache Pinot,
+        Kafka, FastAPI, and Vue.js.
+      </p>
+      <div class="meta">
+        <span class="pill">Status: Ready for implementation planning</span>
+        <span class="pill">Scope: Demo / local development</span>
+        <span class="pill">Frontend: Vue 3 + Vite</span>
+        <span class="pill">Backend: FastAPI</span>
+        <span class="pill">Streaming: Kafka</span>
+        <span class="pill">Analytics DB: Apache Pinot</span>
+      </div>
+    </header>
+
+    <section class="toc">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#overview">Product overview</a></li>
+        <li><a href="#goals">Goals and non-goals</a></li>
+        <li><a href="#users">Target user and use case</a></li>
+        <li><a href="#metrics">Metrics in scope</a></li>
+        <li><a href="#architecture">System architecture</a></li>
+        <li><a href="#frontend">Frontend requirements</a></li>
+        <li><a href="#backend">Backend requirements</a></li>
+        <li><a href="#events">Kafka event model</a></li>
+        <li><a href="#pinot">Apache Pinot requirements</a></li>
+        <li><a href="#api">API requirements</a></li>
+        <li><a href="#validation">Business rules and validation</a></li>
+        <li><a href="#realtime">Real-time behavior</a></li>
+        <li><a href="#errors">Error handling</a></li>
+        <li><a href="#infra">Local development and infrastructure</a></li>
+        <li><a href="#acceptance">Acceptance criteria</a></li>
+      </ol>
+    </section>
+
+    <section id="overview">
+      <h2>1. Product overview</h2>
+      <p>
+        The project is a local demo application that simulates a simplified ride-hailing
+        operational dashboard. Its primary purpose is to provide hands-on experience with
+        Apache Pinot as a real-time analytics database, using Kafka as the ingestion layer.
+      </p>
+      <p>
+        The application contains two Vue.js pages:
+      </p>
+      <ul>
+        <li><strong>Analytics Dashboard</strong> — visualizes the latest metric values and how each metric changed during the last hour.</li>
+        <li><strong>Metrics Settings</strong> — allows the user to manually change metric values and submit a new complete system snapshot.</li>
+      </ul>
+      <p>
+        The project intentionally avoids production concerns such as authentication,
+        multi-user coordination, complex domain workflows, and a transactional relational database.
+      </p>
+    </section>
+
+    <section id="goals">
+      <h2>2. Goals and non-goals</h2>
+      <h3>Goals</h3>
+      <ul>
+        <li>Learn how Kafka streams data into Apache Pinot.</li>
+        <li>Learn how Pinot supports low-latency analytical queries over recently ingested data.</li>
+        <li>Visualize real-time metric changes from a Vue.js dashboard.</li>
+        <li>Build a small FastAPI layer for ingestion validation and analytics querying.</li>
+        <li>Practice historical time-series queries, especially for a rolling one-hour window.</li>
+        <li>Keep the architecture simple enough to understand every component end to end.</li>
+      </ul>
+
+      <h3>Non-goals</h3>
+      <ul>
+        <li>No authentication or authorization.</li>
+        <li>No real driver or rider accounts.</li>
+        <li>No real ride lifecycle management.</li>
+        <li>No payment, pricing, routing, or geospatial ride matching.</li>
+        <li>No PostgreSQL or other transactional database.</li>
+        <li>No production deployment, high availability, or advanced security hardening.</li>
+        <li>No multi-zone support in the first version.</li>
+      </ul>
+    </section>
+
+    <section id="users">
+      <h2>3. Target user and use case</h2>
+      <p>
+        The only intended user is the developer operating the demo locally.
+        The user changes operational values from the Settings page and immediately observes
+        how the Analytics Dashboard reacts after the new event is ingested into Pinot.
+      </p>
+      <div class="callout success">
+        <strong>Primary learning loop:</strong><br/>
+        Change a value → FastAPI validates it → Kafka receives a snapshot event → Pinot ingests it →
+        dashboard polling retrieves updated analytics → UI reflects the change.
+      </div>
+    </section>
+
+    <section id="metrics">
+      <h2>4. Metrics in scope</h2>
+      <div class="grid">
+        <div class="metric-card">
+          <strong>Online Drivers</strong>
+          <span class="small">Number of currently online drivers.</span>
+        </div>
+        <div class="metric-card">
+          <strong>Ride Requests</strong>
+          <span class="small">Current total ride requests represented by the submitted snapshot.</span>
+        </div>
+        <div class="metric-card">
+          <strong>Accepted Requests</strong>
+          <span class="small">Current number of accepted ride requests.</span>
+        </div>
+        <div class="metric-card">
+          <strong>Cancelled Requests</strong>
+          <span class="small">Current number of cancelled ride requests.</span>
+        </div>
+        <div class="metric-card">
+          <strong>Drivers Waiting</strong>
+          <span class="small">Number of online drivers currently waiting in the configured zone.</span>
+        </div>
+      </div>
+
+      <p>
+        Only one logical zone is used in this project, but every event must still include
+        a <code>zone_id</code> so that the data model remains extensible.
+      </p>
+    </section>
+
+    <section id="architecture">
+      <h2>5. System architecture</h2>
+      <pre><code>┌────────────────────┐
+│ Vue Settings Page  │
+└─────────┬──────────┘
+          │ POST complete metric snapshot
+          ▼
+┌────────────────────┐
+│      FastAPI       │
+│ validation + APIs  │
+└─────────┬──────────┘
+          │ publish event
+          ▼
+┌────────────────────┐
+│       Kafka        │
+└─────────┬──────────┘
+          │ real-time ingestion
+          ▼
+┌────────────────────┐
+│   Apache Pinot     │
+│ analytics storage  │
+└─────────┬──────────┘
+          │ analytical queries
+          ▼
+┌────────────────────┐
+│      FastAPI       │
+└─────────┬──────────┘
+          │ polling responses
+          ▼
+┌────────────────────┐
+│ Vue Dashboard Page │
+└────────────────────┘</code></pre>
+
+      <p>
+        Apache Pinot is the only persistent analytical data store in the demo.
+        Kafka transports submitted metric snapshots from FastAPI to Pinot.
+      </p>
+    </section>
+
+    <section id="frontend">
+      <h2>6. Frontend requirements</h2>
+
+      <h3>6.1 Technology</h3>
+      <ul>
+        <li>Vue 3</li>
+        <li>Vite</li>
+        <li>Chart.js or a lightweight Vue-compatible wrapper around Chart.js</li>
+        <li>A small Vue state store, implemented either with Pinia or native reactive state</li>
+      </ul>
+
+      <h3>6.2 Analytics Dashboard page</h3>
+      <p>
+        The dashboard must contain five metric blocks. Every block must display:
+      </p>
+      <ul>
+        <li>The metric name.</li>
+        <li>The latest value.</li>
+        <li>A time-series chart showing how the value changed during the last hour.</li>
+      </ul>
+
+      <p>Expected layout:</p>
+      <pre><code>----------------------------------------------------
+| Online Drivers       | Ride Requests             |
+| latest value         | latest value              |
+| [last-hour chart]    | [last-hour chart]         |
+----------------------------------------------------
+| Accepted Requests    | Cancelled Requests        |
+| latest value         | latest value              |
+| [last-hour chart]    | [last-hour chart]         |
+----------------------------------------------------
+| Drivers Waiting                                   |
+| latest value                                      |
+| [last-hour chart]                                 |
+----------------------------------------------------</code></pre>
+
+      <p>
+        The charts may connect observed values using normal line interpolation.
+        No advanced smoothing, forecasting, or aggregation is required.
+      </p>
+
+      <h3>6.3 Metrics Settings page</h3>
+      <p>The page must contain one numeric input for each of the five metrics and one submit button.</p>
+      <table>
+        <thead>
+          <tr><th>Field</th><th>Input behavior</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Online Drivers</td><td>Integer, minimum 0</td></tr>
+          <tr><td>Ride Requests</td><td>Integer, minimum 0</td></tr>
+          <tr><td>Accepted Requests</td><td>Integer, minimum 0</td></tr>
+          <tr><td>Cancelled Requests</td><td>Integer, minimum 0</td></tr>
+          <tr><td>Drivers Waiting</td><td>Integer, minimum 0</td></tr>
+        </tbody>
+      </table>
+
+      <h3>6.4 Frontend state behavior</h3>
+      <p>
+        The frontend maintains the latest known value for all five metrics.
+        When the Settings page is first loaded:
+      </p>
+      <ol>
+        <li>It requests the latest snapshot from the backend.</li>
+        <li>If a snapshot exists, the store is initialized using those values.</li>
+        <li>If no snapshot exists, all five values default to <code>0</code>.</li>
+      </ol>
+
+      <p>
+        When the user changes only one input, unchanged metrics keep their values in the frontend store.
+        On submit, the frontend sends the full snapshot rather than sending <code>null</code> values.
+      </p>
+
+      <div class="callout">
+        Example: if only <code>online_drivers</code> changes from 25 to 40, the request still includes the
+        current values of ride requests, accepted requests, cancelled requests, and waiting drivers.
+      </div>
+    </section>
+
+    <section id="backend">
+      <h2>7. Backend requirements</h2>
+
+      <h3>7.1 Technology</h3>
+      <ul>
+        <li>Python</li>
+        <li>FastAPI</li>
+        <li>Pydantic request and response models</li>
+        <li>Kafka producer client</li>
+        <li>HTTP client or Pinot-compatible client for analytical queries</li>
+      </ul>
+
+      <h3>7.2 Responsibilities</h3>
+      <p>The backend has two primary responsibilities:</p>
+      <ol>
+        <li><strong>Ingestion path:</strong> validate a submitted complete metric snapshot and publish it to Kafka.</li>
+        <li><strong>Query path:</strong> query Pinot for current metric values and one-hour history, then return JSON to the Vue dashboard.</li>
+      </ol>
+
+      <p>
+        FastAPI should remain stateless. The frontend owns temporary editable state; Pinot owns persisted analytical history.
+      </p>
+    </section>
+
+    <section id="events">
+      <h2>8. Kafka event model</h2>
+
+      <p>Each successful settings submission produces exactly one complete snapshot event.</p>
+
+      <pre><code>{
+  "event_id": "uuid",
+  "timestamp": "2026-10-11T08:30:00Z",
+  "zone_id": "ZONE_1",
+  "online_drivers": 75,
+  "ride_requests": 100,
+  "accepted_requests": 60,
+  "cancelled_requests": 15,
+  "waiting_drivers": 20
+}</code></pre>
+
+      <h3>Required properties</h3>
+      <ul>
+        <li><code>event_id</code> — unique identifier generated by the backend.</li>
+        <li><code>timestamp</code> — backend-generated UTC event timestamp.</li>
+        <li><code>zone_id</code> — fixed to the demo zone identifier, initially <code>ZONE_1</code>.</li>
+        <li>All five metrics — always present and non-null.</li>
+      </ul>
+
+      <p>
+        The Kafka topic may be named something explicit such as
+        <code>ride-metrics-snapshots</code>.
+      </p>
+    </section>
+
+    <section id="pinot">
+      <h2>9. Apache Pinot requirements</h2>
+
+      <h3>9.1 Table type</h3>
+      <p>
+        The application should use a Pinot real-time table consuming directly from the Kafka topic.
+      </p>
+
+      <h3>9.2 Data stored</h3>
+      <p>
+        Pinot stores every snapshot event. Existing historical rows are not overwritten.
+        This append-only model enables last-hour time-series visualization.
+      </p>
+
+      <h3>9.3 Query patterns</h3>
+      <p>Pinot must support at least the following query patterns:</p>
+      <ul>
+        <li>Retrieve the latest snapshot for <code>ZONE_1</code>.</li>
+        <li>Retrieve the last hour of values ordered by timestamp.</li>
+        <li>Return the five current values for dashboard cards.</li>
+        <li>Return timestamp/value pairs for each metric chart.</li>
+      </ul>
+
+      <div class="callout warning">
+        Since this is a learning project, optimization beyond what is needed for responsive local queries is not required.
+        Schema/index decisions should remain simple and understandable.
+      </div>
+    </section>
+
+    <section id="api">
+      <h2>10. API requirements</h2>
+
+      <h3>10.1 Submit metric snapshot</h3>
+      <p><code>POST /api/metrics</code></p>
+
+      <p>Request:</p>
+      <pre><code>{
+  "zone_id": "ZONE_1",
+  "online_drivers": 75,
+  "ride_requests": 100,
+  "accepted_requests": 60,
+  "cancelled_requests": 15,
+  "waiting_drivers": 20
+}</code></pre>
+
+      <p>Behavior:</p>
+      <ol>
+        <li>Validate the payload.</li>
+        <li>Generate <code>event_id</code> and <code>timestamp</code>.</li>
+        <li>Publish one event to Kafka.</li>
+        <li>Return a success response when the event is accepted for publishing.</li>
+      </ol>
+
+      <h3>10.2 Get current metrics</h3>
+      <p><code>GET /api/metrics/current?zone_id=ZONE_1</code></p>
+      <p>
+        Returns the most recently ingested snapshot from Pinot.
+        If Pinot contains no snapshots yet, the backend returns a valid zero-valued snapshot.
+      </p>
+
+      <h3>10.3 Get dashboard history</h3>
+      <p><code>GET /api/metrics/history?zone_id=ZONE_1&amp;window=1h</code></p>
+      <p>
+        Returns historical timestamped metric observations for the previous hour.
+        The response may contain all five metric series in one payload to reduce frontend requests.
+      </p>
+
+      <h3>10.4 Optional combined dashboard endpoint</h3>
+      <p>
+        During implementation, it is acceptable to expose a combined endpoint such as
+        <code>GET /api/dashboard</code> that returns current values plus one-hour history
+        in a single response, if this keeps the frontend simpler.
+      </p>
+    </section>
+
+    <section id="validation">
+      <h2>11. Business rules and validation</h2>
+
+      <p>The backend is the final authority for validating submitted data.</p>
+
+      <table>
+        <thead>
+          <tr><th>Rule</th><th>Requirement</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Non-negative values</td>
+            <td>All metrics must be integers greater than or equal to 0.</td>
+          </tr>
+          <tr>
+            <td>Accepted + cancelled</td>
+            <td><code>accepted_requests + cancelled_requests &lt;= ride_requests</code></td>
+          </tr>
+          <tr>
+            <td>Waiting drivers</td>
+            <td><code>waiting_drivers &lt;= online_drivers</code></td>
+          </tr>
+          <tr>
+            <td>Pending requests</td>
+            <td>Allowed. Ride requests do not need to equal accepted + cancelled.</td>
+          </tr>
+          <tr>
+            <td>Complete snapshot</td>
+            <td>All five metrics must be present in every accepted request.</td>
+          </tr>
+          <tr>
+            <td>Zone</td>
+            <td>Only the configured demo zone is accepted in v1.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>
+        The frontend should also provide immediate input-level validation for user convenience,
+        but backend validation remains mandatory.
+      </p>
+    </section>
+
+    <section id="realtime">
+      <h2>12. Real-time behavior</h2>
+
+      <h3>Dashboard polling</h3>
+      <p>
+        The Vue dashboard polls FastAPI at a short fixed interval.
+        A default interval of approximately 1–2 seconds is recommended for the local demo.
+      </p>
+
+      <p>Expected lifecycle:</p>
+      <ol>
+        <li>User submits a new snapshot.</li>
+        <li>FastAPI publishes it to Kafka.</li>
+        <li>Pinot consumes and stores the event.</li>
+        <li>The next dashboard poll queries Pinot through FastAPI.</li>
+        <li>The metric card and corresponding chart reflect the new value.</li>
+      </ol>
+
+      <p>
+        WebSockets and Server-Sent Events are explicitly out of scope for v1.
+      </p>
+    </section>
+
+    <section id="errors">
+      <h2>13. Error handling</h2>
+
+      <ul>
+        <li>Invalid numeric input should produce a clear validation message.</li>
+        <li>Business-rule violations should return HTTP 422 or HTTP 400 with a readable explanation.</li>
+        <li>Kafka publishing failures should return an error and must not be reported as successful.</li>
+        <li>Pinot query failures should return an appropriate backend error and the frontend should show a non-blocking error state.</li>
+        <li>If history is empty, charts should render an empty state rather than fail.</li>
+        <li>If no previous snapshot exists, current metrics should default to zero.</li>
+      </ul>
+    </section>
+
+    <section id="infra">
+      <h2>14. Local development and infrastructure</h2>
+
+      <p>
+        The entire demo should run locally using Docker Compose where practical.
+      </p>
+
+      <p>Expected services:</p>
+      <ul>
+        <li>Kafka</li>
+        <li>Apache Pinot components required for a local real-time table</li>
+        <li>FastAPI backend</li>
+        <li>Vue frontend</li>
+      </ul>
+
+      <p>
+        It is acceptable during early development to run Vue and/or FastAPI directly on the host while
+        Kafka and Pinot run in containers. The final local setup should be easy to start and document.
+      </p>
+
+      <h3>Configuration</h3>
+      <p>
+        Hostnames, ports, Kafka topic name, Pinot broker URL, and polling interval should be configurable
+        using environment variables or simple configuration files.
+      </p>
+    </section>
+
+    <section id="acceptance">
+      <h2>15. Acceptance criteria</h2>
+
+      <ol>
+        <li>The project starts locally with documented commands.</li>
+        <li>The Settings page shows five numeric inputs and a submit button.</li>
+        <li>All inputs reject negative values.</li>
+        <li>The backend rejects <code>accepted + cancelled &gt; ride_requests</code>.</li>
+        <li>The backend rejects <code>waiting_drivers &gt; online_drivers</code>.</li>
+        <li>Submitting a settings form creates one complete Kafka snapshot event.</li>
+        <li>No metric in the event is null.</li>
+        <li>Pinot consumes the event from Kafka and persists it in the real-time table.</li>
+        <li>The Dashboard displays all five latest values.</li>
+        <li>The Dashboard displays a one-hour history chart for every metric.</li>
+        <li>The Dashboard updates through polling without requiring a page refresh.</li>
+        <li>Refreshing the Settings page initializes values from the latest Pinot snapshot.</li>
+        <li>If Pinot contains no data, the application initializes all metrics to zero.</li>
+        <li>Only one zone is used, while <code>zone_id</code> remains part of the event and API model.</li>
+        <li>No PostgreSQL database, authentication flow, or production-grade user management is introduced.</li>
+      </ol>
+
+      <div class="callout success">
+        <strong>Definition of done:</strong>
+        A developer can change one or more metrics from the Settings page and see the new values
+        and their historical evolution appear on the Dashboard after the Kafka → Pinot ingestion path completes.
+      </div>
+    </section>
+
+    <section>
+      <h2>16. Suggested next step</h2>
+      <p>
+        Use this PRD to create a technical implementation plan containing:
+        repository structure, Docker Compose services, Kafka topic configuration,
+        Pinot schema/table configuration, FastAPI endpoints and models,
+        Vue components/store structure, implementation sequence, and test strategy.
+      </p>
+    </section>
+
+    <div class="footer">
+      PRD — Real-Time Ride Analytics Demo with Apache Pinot
+    </div>
+  </main>
+</body>
+</html>

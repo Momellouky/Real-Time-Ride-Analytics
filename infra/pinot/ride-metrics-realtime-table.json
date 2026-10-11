@@ -1,0 +1,31 @@
+{
+  "tableName": "ride_metrics",
+  "tableType": "REALTIME",
+  "segmentsConfig": {
+    "timeColumnName": "event_timestamp",
+    "schemaName": "ride_metrics",
+    "replicasPerPartition": "1"
+  },
+  "tenants": {},
+  "tableIndexConfig": {
+    "loadMode": "MMAP",
+    "invertedIndexColumns": ["zone_id"],
+    "rangeIndexColumns": ["event_timestamp"]
+  },
+  "ingestionConfig": {
+    "streamIngestionConfig": {
+      "streamConfigMaps": [{
+        "streamType": "kafka",
+        "stream.kafka.topic.name": "ride-metrics-snapshots",
+        "stream.kafka.decoder.class.name": "org.apache.pinot.plugin.inputformat.json.JSONMessageDecoder",
+        "stream.kafka.consumer.factory.class.name": "org.apache.pinot.plugin.stream.kafka30.KafkaConsumerFactory",
+        "stream.kafka.broker.list": "kafka:9092",
+        "stream.kafka.consumer.prop.auto.offset.reset": "smallest",
+        "realtime.segment.flush.threshold.rows": "0",
+        "realtime.segment.flush.threshold.time": "24h",
+        "realtime.segment.flush.threshold.segment.size": "50M"
+      }]
+    }
+  },
+  "metadata": {"customConfigs": {}}
+}

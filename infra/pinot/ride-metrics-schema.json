@@ -1,0 +1,18 @@
+{
+  "schemaName": "ride_metrics",
+  "enableColumnBasedNullHandling": true,
+  "dimensionFieldSpecs": [
+    {"name": "event_id", "dataType": "STRING", "notNull": true},
+    {"name": "zone_id", "dataType": "STRING", "notNull": true}
+  ],
+  "metricFieldSpecs": [
+    {"name": "online_drivers", "dataType": "INT", "notNull": true},
+    {"name": "ride_requests", "dataType": "INT", "notNull": true},
+    {"name": "accepted_requests", "dataType": "INT", "notNull": true},
+    {"name": "cancelled_requests", "dataType": "INT", "notNull": true},
+    {"name": "waiting_drivers", "dataType": "INT", "notNull": true}
+  ],
+  "dateTimeFieldSpecs": [
+    {"name": "event_timestamp", "dataType": "LONG", "format": "1:MILLISECONDS:EPOCH", "granularity": "1:MILLISECONDS"}
+  ]
+}
