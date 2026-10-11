@@ -1,0 +1,59 @@
+{
+  "schemaName": "operations",
+  "enableColumnBasedNullHandling": true,
+  "dimensionFieldSpecs": [
+    {
+      "name": "event_id",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "event_version",
+      "dataType": "INT",
+      "notNull": true
+    },
+    {
+      "name": "simulation_id",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "event_type",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "zone_id",
+      "dataType": "STRING",
+      "notNull": true
+    },
+    {
+      "name": "user_id",
+      "dataType": "STRING"
+    },
+    {
+      "name": "driver_id",
+      "dataType": "STRING"
+    },
+    {
+      "name": "ride_id",
+      "dataType": "STRING"
+    }
+  ],
+  "metricFieldSpecs": [
+    {
+      "name": "sequence_number",
+      "dataType": "LONG",
+      "notNull": true
+    }
+  ],
+  "dateTimeFieldSpecs": [
+    {
+      "name": "event_timestamp",
+      "dataType": "LONG",
+      "format": "1:MILLISECONDS:EPOCH",
+      "granularity": "1:MILLISECONDS",
+      "notNull": true
+    }
+  ]
+}

@@ -95,6 +95,69 @@ The implementation covers the PRD's single-zone snapshot workflow. The current
 configuration supports one zone (`ZONE_1`), with one Kafka partition
 and one Pinot replica.
 
+## v2 event-driven pipeline
+
+The v2 implementation adds immutable ride and driver events alongside the existing
+v1 snapshot workflow. Its data plane is available now; the simulation engine,
+generator controls, analytical APIs, and v2 dashboard follow in later phases.
+The v1 Settings page, APIs, topic, table, and dashboard retain their behavior.
+
+```text
+Ride/driver events → Kafka ride-operations → Pinot operations_REALTIME
+```
+
+Provision the v2 data plane independently:
+
+```bash
+bash scripts/setup-v2.sh
+python3 infra/pinot/smoke_test_operations.py
+```
+
+Setup starts or reuses the shared infrastructure and creates a separate topic with
+one partition and one replica. It registers the `operations` schema and REALTIME
+table, or checks existing resources for compatibility. It does not overwrite
+existing configurations or insert test data. Provision v1 with `scripts/start.sh`
+when starting both workflows from an empty cluster.
+
+The smoke test adds ten events under a unique `smoke-...` simulation ID. It covers
+all eight event types using a driver connection, a cancelled request, an accepted
+and completed ride, and a driver disconnection. It verifies every stored field,
+null entity IDs, exact per-type counts, and sequence ordering. Repeated checks
+append another independent run; old events remain available for inspection.
+
+The event envelope carries event ID/version, simulation ID, sequence number,
+timestamp, event type, zone, and nullable user/driver/ride IDs. The single zone is
+`ZONE_1`. Every future v2 dashboard query must filter on its simulation ID.
+Column-based null handling preserves absent entity IDs. Time range and
+simulation/type/zone indexes support analytical filtering. Segment flush settings
+use a one-hour interval and a 100 MB target size.
+
+The committed configuration uses `ingestionConfig.streamIngestionConfig`, as in
+the [Pinot stream ingestion guide](https://docs.pinot.apache.org/build-with-pinot/ingestion/stream-ingestion/stream-ingestion),
+instead of the plan's legacy `tableIndexConfig.streamConfigs` placement.
+
+Inspect a run in the Controller query console:
+
+```sql
+SET enableNullHandling=true;
+SELECT * FROM operations
+WHERE simulation_id = 'SMOKE_SIMULATION_ID'
+ORDER BY sequence_number ASC
+LIMIT 100;
+
+SELECT event_type, COUNT(*) FROM operations
+WHERE simulation_id = 'SMOKE_SIMULATION_ID'
+GROUP BY event_type;
+```
+
+If ingestion stalls, inspect Kafka's `ride-operations` topic and the Controller's
+`operations_REALTIME` consuming segments, then check Pinot server logs. The v2
+smoke test rejects Broker SQL errors and incomplete server responses. Setup
+rejects conflicting schemas, ingestion settings, or topic partition/replica counts
+so existing analytical data remains intact.
+
+Phase 1 results are recorded in [docs/v2-step-1-verification.md](docs/v2-step-1-verification.md).
+
 ## Repository structure
 
 ```text

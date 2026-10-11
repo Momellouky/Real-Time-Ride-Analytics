@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Implementation Plan v2 — Event-Driven Apache Pinot Ride Analytics Lab</title><style>
+body{margin:0;background:#f6f7f9;color:#1f2937;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;line-height:1.6}
+main{max-width:1120px;margin:auto;padding:42px 24px 80px}
+header,section{background:#fff;border:1px solid #e4e7ec;border-radius:14px;padding:28px;margin:20px 0}
+header{padding:38px;background:linear-gradient(135deg,#fff,#f2f4f7)}
+h1{margin:0 0 10px;font-size:2.15rem}h2{margin-top:0}h3{margin-top:22px}
+.meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}.pill{padding:5px 9px;border:1px solid #e4e7ec;border-radius:999px;background:#f2f4f7;font-size:.86rem}
+pre{background:#101828;color:#eaecf0;padding:16px;border-radius:9px;overflow:auto;font-size:.9rem;line-height:1.45}
+code{font-family:Consolas,SFMono-Regular,monospace}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.93rem}th,td{border:1px solid #e4e7ec;padding:9px 11px;text-align:left;vertical-align:top}th{background:#f2f4f7}
+.good,.info,.warn{padding:12px 15px;border-left:4px solid;border-radius:6px;margin:14px 0}.good{background:#ecfdf3;border-color:#12b76a}.info{background:#eff8ff;border-color:#2e90fa}.warn{background:#fffaeb;border-color:#f79009}
+.small{color:#667085;font-size:.9rem}
+</style></head>
+<body><main>
+<header><h1>Implementation Plan v2 — Event-Driven Apache Pinot Ride Analytics Lab</h1>
+<p>Full implementation blueprint for converting the existing snapshot demo into a high-throughput, event-driven Apache Pinot lab while preserving v1.</p>
+<div class="meta">
+<span class="pill">v1 preserved</span><span class="pill">operations_REALTIME</span>
+<span class="pill">Generator UI</span><span class="pill">50–1000 events/sec presets</span>
+<span class="pill">Single zone: ZONE_1</span>
+</div></header>
+<section><h2>1. Goal and design principles</h2>
+<p>v2 keeps the current snapshot-based demo intact, but adds a separate event-driven lab. The new path stores immutable user, ride, and driver events in Kafka/Pinot and derives dashboard values with Pinot analytics instead of storing precomputed counters.</p>
+<div class="good"><b>Core learning objective:</b> continuously ingest hundreds or thousands of events per second while Pinot serves low-latency filters, counts, time buckets, distinct counts, and latest-state queries.</div>
+<ul>
+<li>Keep v1 untouched for comparison.</li>
+<li>Events are append-only.</li>
+<li>The generator creates only valid state transitions.</li>
+<li>Pinot stores events, not dashboard counters.</li>
+<li>Every Start creates a fresh simulation run.</li>
+<li>The generator runs in FastAPI; Vue only controls it.</li>
+</ul>
+</section><section><h2>2. What remains untouched</h2>
+<ul>
+<li>Existing Settings page.</li>
+<li>Existing v1 APIs.</li>
+<li>Existing v1 Kafka topic.</li>
+<li>Existing <code>ride_metrics</code> Pinot table/schema.</li>
+<li>Existing snapshot dashboard behavior.</li>
+</ul>
+<pre>v1:
+Settings → FastAPI → Kafka → ride_metrics_REALTIME
+
+v2:
+Generator UI → FastAPI Generator → Kafka → operations_REALTIME → analytical dashboard</pre>
+</section><section><h2>3. v2 architecture</h2>
+<pre>Vue Generator Page
+       ↓ control API
+FastAPI Generator Service
+  ├─ in-memory users
+  ├─ in-memory drivers
+  ├─ in-memory rides
+  ├─ state transition engine
+  └─ rate scheduler
+       ↓
+Kafka topic: ride-operations
+       ↓
+Apache Pinot: operations_REALTIME
+       ↓
+FastAPI Analytics API
+       ↓
+Vue Dashboard v2</pre>
+<div class="info">The generator memory exists only to produce valid domain events. Analytics should come from Pinot whenever practical.</div>
+</section><section><h2>4. Event model</h2>
+<table><tr><th>Event</th><th>Meaning</th></tr>
+<tr><td><code>RIDE_REQUESTED</code></td><td>User creates a ride request.</td></tr>
+<tr><td><code>RIDE_ACCEPTED</code></td><td>A waiting driver accepts it.</td></tr>
+<tr><td><code>RIDE_CANCELLED</code></td><td>User cancels before acceptance.</td></tr>
+<tr><td><code>RIDE_COMPLETED</code></td><td>Accepted ride finishes.</td></tr>
+<tr><td><code>DRIVER_CONNECTED</code></td><td>Offline driver connects.</td></tr>
+<tr><td><code>DRIVER_WAITING</code></td><td>Online driver is unassigned.</td></tr>
+<tr><td><code>DRIVER_ASSIGNED</code></td><td>Waiting driver is assigned.</td></tr>
+<tr><td><code>DRIVER_DISCONNECTED</code></td><td>Waiting driver disconnects.</td></tr></table>
+
+<h3>Common event envelope</h3>
+<pre>{
+  "event_id": "uuid",
+  "event_version": 1,
+  "simulation_id": "sim-...",
+  "sequence_number": 18432,
+  "event_timestamp": 1791712800123,
+  "event_type": "RIDE_ACCEPTED",
+  "zone_id": "ZONE_1",
+  "user_id": "user-004211",
+  "driver_id": "driver-000482",
+  "ride_id": "ride-007844"
+}</pre>
+
+<p><b>simulation_id</b> is required because old runs remain in Pinot. Every dashboard query filters on the active simulation.</p>
+<p><b>sequence_number</b> is a monotonically increasing per-run number used to break timestamp ties at high event rates.</p>
+</section><section><h2>5. State machines and invariants</h2>
+<h3>User</h3>
+<pre>IDLE
+  └─ RIDE_REQUESTED → WAITING_FOR_DRIVER
+       ├─ RIDE_CANCELLED → IDLE
+       └─ RIDE_ACCEPTED → IN_RIDE
+                            └─ RIDE_COMPLETED → IDLE</pre>
+
+<h3>Driver</h3>
+<pre>OFFLINE
+  └─ DRIVER_CONNECTED → WAITING
+       ├─ DRIVER_DISCONNECTED → OFFLINE
+       └─ DRIVER_ASSIGNED → ASSIGNED
+                              └─ ride completion → WAITING</pre>
+
+<h3>Ride</h3>
+<pre>REQUESTED
+  ├─ RIDE_CANCELLED → CANCELLED
+  └─ RIDE_ACCEPTED → ACCEPTED
+                       └─ RIDE_COMPLETED → COMPLETED</pre>
+
+<ol>
+<li>A user has at most one active ride.</li>
+<li>A driver is assigned to at most one active ride.</li>
+<li>Only IDLE users may request rides.</li>
+<li>Only REQUESTED rides may be accepted or cancelled.</li>
+<li>Cancellation after acceptance is out of scope.</li>
+<li>Accept requires a WAITING driver.</li>
+<li>Only WAITING drivers may disconnect.</li>
+<li>ASSIGNED drivers cannot disconnect.</li>
+<li>Completing a ride returns the user to IDLE and driver to WAITING.</li>
+<li>Online drivers = WAITING + ASSIGNED.</li>
+<li>Waiting drivers = drivers whose latest state is WAITING.</li>
+<li>Active users = users whose latest ride state is REQUESTED or ACCEPTED.</li>
+</ol>
+</section><section><h2>6. Generator controls and lifecycle</h2>
+<h3>Frontend-configurable values</h3>
+<table><tr><th>Setting</th><th>Default</th><th>Allowed</th></tr>
+<tr><td>User pool</td><td>10,000</td><td>Positive integer</td></tr>
+<tr><td>Driver pool</td><td>2,000</td><td>Positive integer</td></tr>
+<tr><td>Target Kafka events/sec</td><td>250</td><td>50, 100, 250, 500, 1000, custom</td></tr>
+<tr><td>Zone</td><td>ZONE_1</td><td>Fixed for v2</td></tr></table>
+
+<h3>Start</h3>
+<ol>
+<li>Reject Start if already active.</li>
+<li>Create a new <code>simulation_id</code>.</li>
+<li>Reset sequence number.</li>
+<li>Create fresh user and driver pools.</li>
+<li>All users begin IDLE and all drivers begin OFFLINE.</li>
+<li>Enter WARMING_UP and connect drivers through normal emitted events.</li>
+<li>Move to RUNNING once a useful waiting-driver pool exists.</li>
+</ol>
+
+<h3>Stop</h3>
+<ul>
+<li>Stop scheduling new actions.</li>
+<li>Flush already-created Kafka sends.</li>
+<li>Mark status STOPPED.</li>
+<li>Keep last runtime stats visible.</li>
+<li>Next Start creates a completely fresh run with a new simulation ID.</li>
+<li>Do not delete old Pinot events.</li>
+</ul>
+</section><section><h2>7. Valid action engine</h2>
+<p>Generate valid <b>business actions</b>, never random event names.</p>
+<table><tr><th>Action</th><th>Precondition</th><th>Events</th></tr>
+<tr><td>connect_driver</td><td>OFFLINE driver exists</td><td>DRIVER_CONNECTED, DRIVER_WAITING</td></tr>
+<tr><td>disconnect_driver</td><td>WAITING driver exists</td><td>DRIVER_DISCONNECTED</td></tr>
+<tr><td>request_ride</td><td>IDLE user exists</td><td>RIDE_REQUESTED</td></tr>
+<tr><td>cancel_ride</td><td>REQUESTED ride exists</td><td>RIDE_CANCELLED</td></tr>
+<tr><td>accept_ride</td><td>REQUESTED ride + WAITING driver</td><td>RIDE_ACCEPTED, DRIVER_ASSIGNED</td></tr>
+<tr><td>complete_ride</td><td>ACCEPTED ride exists</td><td>RIDE_COMPLETED, DRIVER_WAITING</td></tr></table>
+
+<h3>Internal selection weights</h3>
+<pre>request_ride       30
+accept_ride        25
+complete_ride      20
+cancel_ride         5
+connect_driver     12
+disconnect_driver   8</pre>
+<p>These are weights, not strict percentages. Invalid actions are excluded. State correctness always wins over desired distribution.</p>
+</section><section><h2>8. Throughput model</h2>
+<table><tr><th>Preset</th><th>Events/hour</th><th>Purpose</th></tr>
+<tr><td>50/s</td><td>180,000</td><td>Smoke load</td></tr>
+<tr><td>100/s</td><td>360,000</td><td>Low sustained load</td></tr>
+<tr><td>250/s</td><td>900,000</td><td>Recommended first meaningful run</td></tr>
+<tr><td>500/s</td><td>1.8M</td><td>Good local Pinot lab load</td></tr>
+<tr><td>1000/s</td><td>3.6M</td><td>Try only after observing resources</td></tr></table>
+
+<p>For an i7 / 16 GB RAM laptop, begin at 100–250 events/sec. Increase gradually while watching memory, CPU, Kafka/Pinot lag, and query latency.</p>
+
+<h3>Rate scheduling</h3>
+<pre>tick = 100 ms
+budget += target_eps * 0.1
+
+while enough event budget:
+    choose a valid action
+    estimate action cost (1 or 2 Kafka events)
+    if cost fits budget:
+        execute action
+        enqueue events
+        budget -= cost
+
+publish the tick batch
+sleep until next tick</pre>
+<div class="info">The UI rate is Kafka events/sec, not actions/sec, because some actions emit two events.</div>
+</section><section><h2>9. Pinot operations schema</h2>
+<pre>{
+  "schemaName": "operations",
+  "enableColumnBasedNullHandling": true,
+  "dimensionFieldSpecs": [
+    {"name": "event_id", "dataType": "STRING", "notNull": true},
+    {"name": "event_version", "dataType": "INT", "notNull": true},
+    {"name": "simulation_id", "dataType": "STRING", "notNull": true},
+    {"name": "event_type", "dataType": "STRING", "notNull": true},
+    {"name": "zone_id", "dataType": "STRING", "notNull": true},
+    {"name": "user_id", "dataType": "STRING"},
+    {"name": "driver_id", "dataType": "STRING"},
+    {"name": "ride_id", "dataType": "STRING"}
+  ],
+  "metricFieldSpecs": [
+    {"name": "sequence_number", "dataType": "LONG", "notNull": true}
+  ],
+  "dateTimeFieldSpecs": [
+    {
+      "name": "event_timestamp",
+      "dataType": "LONG",
+      "format": "1:MILLISECONDS:EPOCH",
+      "granularity": "1:MILLISECONDS"
+    }
+  ]
+}</pre>
+</section><section><h2>10. Pinot REALTIME table</h2>
+<p>Create <code>operations_REALTIME</code> consuming a new Kafka topic <code>ride-operations</code>.</p>
+<pre>{
+  "tableName": "operations",
+  "tableType": "REALTIME",
+  "segmentsConfig": {
+    "timeColumnName": "event_timestamp",
+    "schemaName": "operations",
+    "replicasPerPartition": "1"
+  },
+  "tenants": {},
+  "tableIndexConfig": {
+    "loadMode": "MMAP",
+    "invertedIndexColumns": ["simulation_id", "event_type", "zone_id"],
+    "rangeIndexColumns": ["event_timestamp"],
+    "streamConfigs": {
+      "streamType": "kafka",
+      "stream.kafka.topic.name": "ride-operations",
+      "stream.kafka.decoder.class.name":
+        "org.apache.pinot.plugin.inputformat.json.JSONMessageDecoder",
+      "stream.kafka.consumer.factory.class.name":
+        "org.apache.pinot.plugin.stream.kafka30.KafkaConsumerFactory",
+      "stream.kafka.broker.list": "kafka:9092",
+      "stream.kafka.consumer.prop.auto.offset.reset": "smallest",
+      "realtime.segment.flush.threshold.rows": "0",
+      "realtime.segment.flush.threshold.time": "1h",
+      "realtime.segment.flush.threshold.segment.size": "100M"
+    }
+  },
+  "metadata": {"customConfigs": {}}
+}</pre>
+<p>Start with one Kafka partition for ordering/debugging. 2–4 partitions can be a later scaling exercise.</p>
+</section><section><h2>11. Pinot analytical queries</h2>
+<div class="good">Every query for the active lab run must filter by <code>simulation_id</code>.</div>
+
+<h3>Ride event counts over the last 60 seconds</h3>
+<pre>SELECT event_type, COUNT(*) AS event_count
+FROM operations
+WHERE simulation_id = 'SIMULATION_ID'
+  AND event_timestamp &gt;= ago('PT60S')
+  AND event_type IN (
+    'RIDE_REQUESTED','RIDE_ACCEPTED',
+    'RIDE_CANCELLED','RIDE_COMPLETED'
+  )
+GROUP BY event_type</pre>
+
+<h3>Ride lifecycle per minute for the last hour</h3>
+<pre>SELECT
+  DATETIMECONVERT(
+    event_timestamp,
+    '1:MILLISECONDS:EPOCH',
+    '1:MILLISECONDS:EPOCH',
+    '1:MINUTES'
+  ) AS time_bucket,
+  event_type,
+  COUNT(*) AS event_count
+FROM operations
+WHERE simulation_id = 'SIMULATION_ID'
+  AND event_timestamp &gt;= ago('PT1H')
+  AND event_type IN (
+    'RIDE_REQUESTED','RIDE_ACCEPTED',
+    'RIDE_CANCELLED','RIDE_COMPLETED'
+  )
+GROUP BY time_bucket, event_type
+ORDER BY time_bucket ASC</pre>
+
+<h3>Latest driver state</h3>
+<pre>SELECT latest_driver_event, COUNT(*) AS drivers
+FROM (
+  SELECT
+    driver_id,
+    ARG_MAX(event_timestamp, sequence_number, event_type)
+      AS latest_driver_event
+  FROM operations
+  WHERE simulation_id = 'SIMULATION_ID'
+    AND driver_id IS NOT NULL
+    AND event_type IN (
+      'DRIVER_CONNECTED','DRIVER_WAITING',
+      'DRIVER_ASSIGNED','DRIVER_DISCONNECTED'
+    )
+  GROUP BY driver_id
+)
+GROUP BY latest_driver_event</pre>
+
+<p>Interpret:</p>
+<pre>waiting_drivers = DRIVER_WAITING
+assigned_drivers = DRIVER_ASSIGNED
+online_drivers = DRIVER_WAITING + DRIVER_ASSIGNED + DRIVER_CONNECTED</pre>
+
+<h3>Active users</h3>
+<pre>SELECT COUNT(*) AS active_users
+FROM (
+  SELECT
+    user_id,
+    ARG_MAX(event_timestamp, sequence_number, event_type)
+      AS latest_ride_event
+  FROM operations
+  WHERE simulation_id = 'SIMULATION_ID'
+    AND user_id IS NOT NULL
+    AND event_type IN (
+      'RIDE_REQUESTED','RIDE_ACCEPTED',
+      'RIDE_CANCELLED','RIDE_COMPLETED'
+    )
+  GROUP BY user_id
+)
+WHERE latest_ride_event IN ('RIDE_REQUESTED','RIDE_ACCEPTED')</pre>
+
+<h3>Observed users</h3>
+<pre>SELECT COUNT(DISTINCT user_id)
+FROM operations
+WHERE simulation_id = 'SIMULATION_ID'
+  AND user_id IS NOT NULL</pre>
+
+<h3>Actual Pinot-ingested event rate</h3>
+<pre>SELECT
+  DATETIMECONVERT(
+    event_timestamp,
+    '1:MILLISECONDS:EPOCH',
+    '1:MILLISECONDS:EPOCH',
+    '10:SECONDS'
+  ) AS bucket,
+  COUNT(*) / 10.0 AS events_per_second
+FROM operations
+WHERE simulation_id = 'SIMULATION_ID'
+  AND event_timestamp &gt;= ago('PT10M')
+GROUP BY bucket
+ORDER BY bucket ASC</pre>
+
+<div class="warn">The latest-state queries use subqueries and may require Pinot's multi-stage query engine depending on the installed version. Keep this in the Pinot client query options.</div>
+</section><section><h2>12. Backend APIs</h2>
+<table><tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+<tr><td>POST</td><td><code>/api/v2/generator/start</code></td><td>Start fresh simulation.</td></tr>
+<tr><td>POST</td><td><code>/api/v2/generator/stop</code></td><td>Stop gracefully.</td></tr>
+<tr><td>GET</td><td><code>/api/v2/generator/status</code></td><td>Runtime generator diagnostics.</td></tr>
+<tr><td>GET</td><td><code>/api/v2/dashboard</code></td><td>Pinot analytics + immutable run metadata.</td></tr></table>
+
+<h3>Start request</h3>
+<pre>{
+  "user_count": 10000,
+  "driver_count": 2000,
+  "target_events_per_second": 250
+}</pre>
+
+<h3>Status example</h3>
+<pre>{
+  "simulation_id": "sim-44d1...",
+  "status": "RUNNING",
+  "target_events_per_second": 250,
+  "actual_events_per_second": 247.8,
+  "generated_events": 128420,
+  "user_pool_size": 10000,
+  "driver_pool_size": 2000,
+  "in_memory": {
+    "idle_users": 9121,
+    "waiting_users": 413,
+    "users_in_ride": 466,
+    "offline_drivers": 603,
+    "waiting_drivers": 911,
+    "assigned_drivers": 486
+  }
+}</pre>
+<p>The in-memory counts are diagnostics. The v2 analytical dashboard should use Pinot-derived counts so they can be reconciled against generator state.</p>
+</section><section><h2>13. Generator hot code regions</h2>
+<h3>State enums and entities</h3>
+<pre>class UserState(StrEnum):
+    IDLE = "IDLE"
+    WAITING_FOR_DRIVER = "WAITING_FOR_DRIVER"
+    IN_RIDE = "IN_RIDE"
+
+class DriverState(StrEnum):
+    OFFLINE = "OFFLINE"
+    WAITING = "WAITING"
+    ASSIGNED = "ASSIGNED"
+
+class RideState(StrEnum):
+    REQUESTED = "REQUESTED"
+    ACCEPTED = "ACCEPTED"
+    CANCELLED = "CANCELLED"
+    COMPLETED = "COMPLETED"</pre>
+
+<h3>Event factory</h3>
+<pre>def build_event(sim, event_type, *,
+                user_id=None, driver_id=None, ride_id=None):
+    sim.sequence_number += 1
+    return {
+        "event_id": str(uuid4()),
+        "event_version": 1,
+        "simulation_id": sim.simulation_id,
+        "sequence_number": sim.sequence_number,
+        "event_timestamp": int(time() * 1000),
+        "event_type": event_type,
+        "zone_id": "ZONE_1",
+        "user_id": user_id,
+        "driver_id": driver_id,
+        "ride_id": ride_id,
+    }</pre>
+
+<h3>Accept ride</h3>
+<pre>def accept_ride(sim):
+    ride = sim.random_requested_ride()
+    driver = sim.random_waiting_driver()
+    if ride is None or driver is None:
+        return []
+
+    user = sim.users[ride.user_id]
+    ride.state = RideState.ACCEPTED
+    ride.driver_id = driver.driver_id
+    user.state = UserState.IN_RIDE
+    driver.state = DriverState.ASSIGNED
+    driver.active_ride_id = ride.ride_id
+
+    return [
+        build_event(sim, "RIDE_ACCEPTED",
+            user_id=user.user_id,
+            driver_id=driver.driver_id,
+            ride_id=ride.ride_id),
+        build_event(sim, "DRIVER_ASSIGNED",
+            user_id=user.user_id,
+            driver_id=driver.driver_id,
+            ride_id=ride.ride_id),
+    ]</pre>
+
+<h3>Complete ride</h3>
+<pre>def complete_ride(sim):
+    ride = sim.random_accepted_ride()
+    if ride is None:
+        return []
+
+    user = sim.users[ride.user_id]
+    driver = sim.drivers[ride.driver_id]
+
+    ride.state = RideState.COMPLETED
+    user.state = UserState.IDLE
+    user.active_ride_id = None
+    driver.state = DriverState.WAITING
+    driver.active_ride_id = None
+
+    return [
+        build_event(sim, "RIDE_COMPLETED",
+            user_id=user.user_id,
+            driver_id=driver.driver_id,
+            ride_id=ride.ride_id),
+        build_event(sim, "DRIVER_WAITING",
+            driver_id=driver.driver_id,
+            ride_id=ride.ride_id),
+    ]</pre>
+
+<h3>Kafka batch publishing</h3>
+<pre>async def publish_batch(self, events):
+    deliveries = []
+    for event in events:
+        delivery = await self._producer.send(
+            self._topic,
+            value=event,
+        )
+        deliveries.append(delivery)
+
+    if deliveries:
+        await asyncio.gather(*deliveries)</pre>
+
+<pre>AIOKafkaProducer(
+    bootstrap_servers=settings.kafka_bootstrap_servers,
+    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+    acks="all",
+    linger_ms=5,
+)</pre>
+</section><section><h2>14. Generator frontend page</h2>
+<pre>Ride Event Generator
+────────────────────────────────
+Users    [ 10000 ]
+Drivers  [ 2000 ]
+
+Throughput
+( ) 50/s   ( ) 100/s   (•) 250/s
+( ) 500/s  ( ) 1000/s  ( ) Custom [ ]
+
+[ Start Generator ]  [ Stop Generator ]
+
+Status: RUNNING
+Simulation: sim-44d1...
+Target rate:       250 events/s
+Actual rate:       247.8 events/s
+Generated events:  128,420
+Users:             10,000
+Drivers:           2,000</pre>
+
+<ul>
+<li>Disable Start while WARMING_UP/RUNNING/STOPPING.</li>
+<li>Disable Stop while STOPPED.</li>
+<li>Poll status roughly once per second.</li>
+<li>Show validation and backend errors.</li>
+<li>Display simulation ID.</li>
+<li>Warn, but do not hard-block, custom rates above 1000/s.</li>
+</ul>
+</section><section><h2>15. Dashboard v2</h2>
+<table><tr><th>Card</th><th>Source/definition</th></tr>
+<tr><td>Total user pool</td><td>Configured run metadata.</td></tr>
+<tr><td>Active users</td><td>Pinot: latest ride state REQUESTED or ACCEPTED.</td></tr>
+<tr><td>Online drivers</td><td>Pinot: latest driver state CONNECTED, WAITING, or ASSIGNED.</td></tr>
+<tr><td>Waiting drivers</td><td>Pinot: latest driver state WAITING.</td></tr>
+<tr><td>Ride requests</td><td>Pinot: RIDE_REQUESTED count in last 60 s.</td></tr>
+<tr><td>Accepted rides</td><td>Pinot: RIDE_ACCEPTED count in last 60 s.</td></tr>
+<tr><td>Cancelled rides</td><td>Pinot: RIDE_CANCELLED count in last 60 s.</td></tr>
+<tr><td>Completed rides</td><td>Pinot: RIDE_COMPLETED count in last 60 s.</td></tr></table>
+
+<h3>Charts</h3>
+<ul>
+<li>Requested / accepted / cancelled / completed per minute over the last hour.</li>
+<li>Actual Pinot-ingested events/sec per 10-second bucket over the last 10 minutes.</li>
+<li>Current driver-state distribution: waiting / assigned / offline.</li>
+<li>Optional later exercise: reconstruct online/waiting driver population historically without introducing snapshot events.</li>
+</ul>
+<div class="warn">Do not reintroduce metric snapshots merely to make historical state charts easy. The point of v2 is event analytics.</div>
+</section><section><h2>16. Repository changes</h2>
+<pre>ride-analytics-demo/
+├── ... existing v1 files remain ...
+├── infra/pinot/
+│   ├── ride-metrics-*                    # existing
+│   ├── operations-schema.json            # NEW
+│   └── operations-realtime-table.json    # NEW
+├── backend/app/
+│   ├── api/
+│   │   ├── metrics.py                    # existing
+│   │   ├── generator.py                  # NEW
+│   │   └── dashboard_v2.py               # NEW
+│   ├── generator/
+│   │   ├── service.py
+│   │   ├── simulation.py
+│   │   ├── entities.py
+│   │   ├── actions.py
+│   │   └── events.py
+│   ├── queries/
+│   │   └── operations.py
+│   └── services/
+│       ├── kafka_producer.py
+│       └── pinot_client.py
+└── frontend/src/
+    ├── views/
+    │   ├── SettingsView.vue              # KEEP
+    │   ├── DashboardView.vue             # KEEP
+    │   ├── GeneratorView.vue             # NEW
+    │   └── DashboardV2View.vue           # NEW
+    └── stores/
+        └── generator.js                   # NEW</pre>
+</section><section><h2>17. Implementation phases</h2>
+<ol>
+<li><b>v2 data plane:</b> create topic, schema, REALTIME table; manually publish every event type and verify Pinot.</li>
+<li><b>Simulation model:</b> entities, pools, indexes, invariants, and actions with unit tests. No background loop yet.</li>
+<li><b>Scheduler:</b> event-budget rate limiter, simulation lifecycle, Kafka batch publish, Start/Stop.</li>
+<li><b>Generator API/UI:</b> pool sizes, presets, status, Start/Stop.</li>
+<li><b>Pinot analytics:</b> recent counts, time buckets, latest driver state, active users, observed users, event rate.</li>
+<li><b>Dashboard v2:</b> cards/charts and combined endpoint.</li>
+<li><b>Benchmark/tune:</b> 50 → 100 → 250 → 500 → 1000 events/sec.</li>
+</ol>
+<div class="good"><b>Important:</b> Codex should complete and verify each phase before moving to the next.</div>
+</section><section><h2>18. Test strategy</h2>
+<h3>State-machine tests</h3>
+<ul>
+<li>A non-IDLE user cannot request another ride.</li>
+<li>An ACCEPTED ride cannot be cancelled.</li>
+<li>Accept requires REQUESTED ride + WAITING driver.</li>
+<li>A driver cannot serve two active rides.</li>
+<li>ASSIGNED drivers cannot disconnect.</li>
+<li>Completion restores user IDLE and driver WAITING.</li>
+<li>Two-event transitions have increasing sequence numbers.</li>
+</ul>
+
+<h3>Generator tests</h3>
+<ul>
+<li>Start creates a unique simulation ID.</li>
+<li>Start while already running returns conflict.</li>
+<li>Stop flushes pending sends and halts scheduling.</li>
+<li>Restart creates a fresh pool and new simulation ID.</li>
+<li>Measured throughput settles within a reasonable tolerance, e.g. ±10%.</li>
+</ul>
+
+<h3>Pinot tests</h3>
+<ul>
+<li>All eight event types ingest.</li>
+<li>simulation_id isolates runs.</li>
+<li>Latest driver state matches known sequences.</li>
+<li>Active-user query matches known ride lifecycles.</li>
+<li>Time-bucket query returns aggregates instead of raw rows.</li>
+</ul>
+
+<h3>Reconciliation</h3>
+<pre>generator waiting drivers ≈ Pinot waiting drivers
+generator assigned drivers ≈ Pinot assigned drivers
+generator active users ≈ Pinot active users</pre>
+<p>Short differences are expected because ingestion is asynchronous. Persistent differences mean an event or query bug.</p>
+</section><section><h2>19. Benchmark procedure</h2>
+<ol>
+<li>50/s for 5 minutes — correctness.</li>
+<li>100/s for 10 minutes.</li>
+<li>250/s for 15–30 minutes.</li>
+<li>500/s for 15–30 minutes.</li>
+<li>1000/s only if memory and ingestion freshness remain healthy.</li>
+</ol>
+<table><tr><th>Record</th><th>Purpose</th></tr>
+<tr><td>Actual generated EPS</td><td>Can the generator hit the requested rate?</td></tr>
+<tr><td>Kafka/Pinot ingestion freshness</td><td>Can Pinot keep up?</td></tr>
+<tr><td>Dashboard query latency</td><td>Does analytics remain interactive?</td></tr>
+<tr><td>Docker memory</td><td>Likely local bottleneck on 16 GB RAM.</td></tr>
+<tr><td>CPU</td><td>Identify producer/Pinot CPU saturation.</td></tr>
+<tr><td>Disk growth</td><td>Protect free SSD space.</td></tr>
+<tr><td>Errors/timeouts</td><td>Define practical local ceiling.</td></tr></table>
+<div class="good">The goal is not to prove PostgreSQL fails at some row count. The goal is to observe continuous high-rate ingestion and low-latency analytics at the same time.</div>
+</section><section><h2>20. Observability and debugging</h2>
+<h3>Generator summary logs (not one log per event)</h3>
+<pre>simulation_id=sim-44d1
+status=RUNNING
+target_eps=250
+actual_eps=248.1
+generated=187420
+users_active=903
+drivers_waiting=872
+drivers_assigned=514</pre>
+
+<h3>Pinot smoke queries</h3>
+<pre>SELECT COUNT(*)
+FROM operations
+WHERE simulation_id = 'SIMULATION_ID';
+
+SELECT event_type, COUNT(*)
+FROM operations
+WHERE simulation_id = 'SIMULATION_ID'
+GROUP BY event_type;
+
+SELECT *
+FROM operations
+WHERE simulation_id = 'SIMULATION_ID'
+ORDER BY sequence_number DESC
+LIMIT 20;</pre>
+
+<table><tr><th>Symptom</th><th>Likely problem</th></tr>
+<tr><td>Generator count grows, Kafka does not</td><td>Producer path.</td></tr>
+<tr><td>Kafka grows, Pinot stalls</td><td>Pinot realtime consumption/config.</td></tr>
+<tr><td>Pinot event counts are right, state counts are wrong</td><td>Latest-state SQL/order logic.</td></tr>
+<tr><td>Generator and Pinot differ briefly</td><td>Normal ingestion delay.</td></tr>
+<tr><td>Difference never converges</td><td>Missing/duplicate transition or bad query.</td></tr></table>
+</section><section><h2>21. Definition of done</h2>
+<ul>
+<li>☐ v1 remains fully functional.</li>
+<li>☐ New <code>ride-operations</code> Kafka topic exists.</li>
+<li>☐ <code>operations_REALTIME</code> consumes it.</li>
+<li>☐ Schema contains event/version/simulation/sequence/time/type/zone/user/driver/ride fields.</li>
+<li>☐ All eight event types work.</li>
+<li>☐ User/driver/ride invariants are unit tested.</li>
+<li>☐ Generator produces only valid actions.</li>
+<li>☐ Start is fresh; Stop is graceful.</li>
+<li>☐ Generator UI supports configurable pools and presets.</li>
+<li>☐ Pinot derives active users and current driver state.</li>
+<li>☐ Dashboard shows total users and active users.</li>
+<li>☐ Dashboard shows recent requested/accepted/cancelled/completed metrics.</li>
+<li>☐ Dashboard shows one-hour aggregated ride lifecycle chart.</li>
+<li>☐ Dashboard shows actual Pinot-ingested throughput.</li>
+<li>☐ 250 events/sec runs continuously without logical inconsistency.</li>
+<li>☐ Higher loads can be tested without code changes.</li>
+<li>☐ README documents v1/v2, setup, load testing, and troubleshooting.</li>
+</ul>
+</section><section><h2>22. Technical notes</h2>
+<p>Apache Pinot supports Kafka-backed REALTIME ingestion where streamed records become queryable within seconds. Its aggregation functions include latest-value patterns such as <code>LASTWITHTIME</code> and <code>ARG_MAX</code>, which fit append-only state-transition analytics.</p>
+<p class="small">Before final commit, validate the exact table-config and multi-stage query options against the Pinot version running locally. Keep the final working JSON configs in source control.</p>
+</section>
+</main></body></html>
