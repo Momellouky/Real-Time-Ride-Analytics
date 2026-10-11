@@ -7,6 +7,7 @@
       </RouterLink>
       <nav aria-label="Main navigation">
         <RouterLink to="/" class="nav-link" exact-active-class="nav-active">Dashboard</RouterLink>
+        <RouterLink to="/dashboard-v2" class="nav-link" exact-active-class="nav-active">Event Dashboard</RouterLink>
         <RouterLink to="/settings" class="nav-link" exact-active-class="nav-active">Metrics Settings</RouterLink>
         <RouterLink to="/generator" class="nav-link" exact-active-class="nav-active">Generator</RouterLink>
       </nav>

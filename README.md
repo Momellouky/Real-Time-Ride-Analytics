@@ -100,8 +100,8 @@ and one Pinot replica.
 
 The v2 implementation adds immutable ride and driver events alongside the existing
 v1 snapshot workflow. Its data plane, simulation model, scheduler, lifecycle, and
-Generator API/UI controls and Pinot analytical query service are available now.
-The combined v2 dashboard API and UI follow in phase 6. Standard startup provisions both workflows;
+Generator API/UI controls, Pinot analytical queries, and combined dashboard API/UI
+are available now. Standard startup provisions both workflows;
 the independent v2 setup command below is also available.
 The v1 Settings page, APIs, topic, table, and dashboard retain their behavior.
 
@@ -130,7 +130,7 @@ append another independent run; old events remain available for inspection.
 
 The event envelope carries event ID/version, simulation ID, sequence number,
 timestamp, event type, zone, and nullable user/driver/ride IDs. The single zone is
-`ZONE_1`. Every future v2 dashboard query must filter on its simulation ID.
+`ZONE_1`. Every v2 dashboard query filters on its simulation ID.
 Column-based null handling preserves absent entity IDs. Time range and
 simulation/type/zone indexes support analytical filtering. Segment flush settings
 use a one-hour interval and a 100 MB target size.
@@ -183,7 +183,7 @@ Memory therefore depends on pool sizes rather than the lifetime event count.
 
 `Simulation.counts()` supplies generator diagnostics; `check_invariants()` audits
 state indexes and reciprocal user/driver/ride relationships for tests and
-debugging. These diagnostics do not replace future Pinot dashboard analytics.
+debugging. These diagnostics do not replace Pinot dashboard analytics.
 The model has no Kafka side effects or background tasks and expects one owner
 to execute actions sequentially. The generator service described below owns
 execution and Kafka publication.
@@ -701,3 +701,50 @@ the web server's application fallback.
 
 Infrastructure follows the [Pinot Docker documentation](https://docs.pinot.apache.org/start-here/install/docker)
 and [Kafka 3.9 quick start](https://kafka.apache.org/39/getting-started/quickstart/).
+
+## Event Analytics Dashboard (v2)
+
+Open http://localhost:5173/dashboard-v2, or choose **Event Dashboard** in the
+navigation. Start and stop runs from **Generator**. The dashboard polls
+`GET /api/v2/dashboard` every two seconds, using the same configurable polling
+interval as the snapshot dashboard.
+
+The eight cards show the configured user population, active users, online and
+waiting drivers, and requested, accepted, cancelled, and completed rides in the
+last 60 seconds. Active users have a latest ride state of requested or accepted;
+online drivers have a latest driver state of connected, waiting, or assigned.
+Population comes from immutable run metadata; activity and fleet state come from
+Pinot. Generator diagnostics and Kafka acknowledgement rates are not substituted
+for analytics.
+
+The charts show four ride lifecycle series per minute over the last hour,
+Pinot-ingested events per second in 10-second buckets over the last 10 minutes,
+and current driver distribution. Each rate bucket divides its ingested event
+count by ten; the open bucket is partial. The distribution includes connected,
+waiting, assigned, and offline drivers. Offline includes drivers that have never
+connected, so its total always matches the configured driver pool.
+
+The combined response contains `run`, `generator_status`, `generator_error`,
+`as_of_ms`, `metrics`, `driver_states`, `observed_users`, `ride_history`, and
+`event_rate`. All six analytical queries share one run ID and timestamp cutoff.
+Before the first run it returns null run metadata, zero cards, and empty series
+without querying Pinot. A stopped run retains metadata and latest entity state;
+its activity windows continue to expire. Starting another run replaces all cards
+and series. Restarting the backend clears its process-owned run metadata; old
+events remain in Pinot but are excluded from subsequent runs.
+
+A run changing while queries execute produces HTTP `409` and is retried by the
+next poll. Unavailable or invalid analytics produce HTTP `503`. During failures
+the UI labels and retains the last successful response, offers a retry button,
+and recovers automatically. Polling never overlaps requests and is cancelled
+when leaving the page.
+
+```bash
+curl -fsS http://localhost:8000/api/v2/dashboard
+```
+
+Browser verification also starts two v2 runs, verifies ingestion and stopped-run
+state against generator diagnostics, and checks that the second run replaces the
+first. These tests append operations events; they do not publish v1 snapshots.
+Step 6 verification results are recorded in
+[docs/v2-step-6-verification.md](docs/v2-step-6-verification.md).
