@@ -1,6 +1,30 @@
 name: ${COMPOSE_PROJECT_NAME:-ride-analytics}
 
 services:
+  backend:
+    profiles: [api]
+    build: ./backend
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    environment:
+      PINOT_BROKER_URL: http://pinot-broker:8099
+      PINOT_QUERY_TIMEOUT_SECONDS: ${PINOT_QUERY_TIMEOUT_SECONDS:-3}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-ride-metrics-snapshots}
+      KAFKA_PUBLISH_TIMEOUT_SECONDS: ${KAFKA_PUBLISH_TIMEOUT_SECONDS:-10}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      pinot-broker:
+        condition: service_healthy
+      pinot-server:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   kafka:
     image: ${KAFKA_IMAGE:-apache/kafka:3.9.1}
     ports:
