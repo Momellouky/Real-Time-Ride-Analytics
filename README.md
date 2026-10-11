@@ -777,8 +777,7 @@ calculation and need not equal `memory_used_gb / memory_total_gb * 100`.
 See the [psutil API reference](https://psutil.io/api/#psutil.cpu_percent) for CPU
 priming and memory semantics.
 
-The benchmark endpoint is described below; the dashboard observability section
-is the subsequent part of Step 7. These services do not start a generator run or append analytics
+The benchmark endpoint and dashboard observability section are described below. These services do not start a generator run or append analytics
 events. Verification is recorded in
 [docs/step7-part1-verification.md](docs/step7-part1-verification.md).
 
@@ -828,5 +827,43 @@ docker compose --profile api run --build --rm --no-deps backend \
   python scripts/verify-benchmark-api.py
 ```
 
-The benchmark UI is the next part of Step 7. API verification results are in
+The benchmark UI is available on the Event Dashboard. API verification results are in
 [docs/step7-part2-verification.md](docs/step7-part2-verification.md).
+
+## Dashboard observability (Step 7, part 3)
+
+The **Benchmark & Observability** section at
+http://localhost:5173/dashboard-v2 shows target and acknowledged actual EPS,
+Pinot-ingested events and pending generated events, average/p95/p99 individual
+query latency, newest-event freshness, CPU usage, and used/total RAM in GiB.
+Generated and acknowledged totals, generator state, run ID, query sample count,
+and system sample time are shown alongside the cards.
+
+Five charts track actual EPS, query latency (three series), ingestion freshness,
+CPU percentage, and memory percentage. CPU and memory axes span 0–100%. The
+browser keeps at most 300 observations from the last ten minutes, discards
+expired observations on each successful poll, and clears history when the run
+changes, including changes to/from no-run state. History lives only while the
+page is mounted; reloads and navigation reset it. System charts use actual
+sampling timestamps and avoid plotting a cached sample more than once.
+
+Observability polls `/api/v2/benchmark/metrics` every two seconds independently
+of business analytics. Requests never overlap, navigation cancels pending work,
+and temporary errors retain the last successful data with its update time and a
+retry button. Business analytics continue polling when observability fails.
+Both sections identify their run because independently polled responses can
+briefly refer to different runs during a transition.
+
+Missing CPU, latency, or freshness measurements show an em dash and chart gaps
+instead of invented zeros. No-run state still displays system measurements.
+Stopped/error runs label actual EPS as the final reported acknowledged rate and
+explain why newest-event age continues growing after production stops. Query
+latency includes all queries through the shared client, including snapshot
+analytics and benchmark polling. Resource scope is explicitly OS-visible, which
+can be the host or Docker VM rather than a container's cgroup allocation.
+
+The frontend/backend services must both use the latest images for this section;
+restarting the backend clears process-owned run metadata while stored events
+remain. Browser verification and screenshots are documented in
+[docs/step7-part3-verification.md](docs/step7-part3-verification.md).
+Controlled load tests and a results report remain the next part of Step 7.

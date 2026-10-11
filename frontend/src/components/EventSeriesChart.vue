@@ -2,7 +2,10 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { Chart, LineController, LineElement, PointElement, LinearScale, Tooltip, Legend } from 'chart.js';
 Chart.register(LineController, LineElement, PointElement, LinearScale, Tooltip, Legend);
-const props = defineProps({ label: String, series: Array, windowEnd: Number, duration: Number, bucketWidth: Number });
+const props = defineProps({ label: String, series: Array, windowEnd: Number, duration: Number, bucketWidth: Number,
+  emptyMessage: { type: String, default: 'No ingested events in this window' },
+  pointLabel: { type: String, default: 'buckets' }, unit: { type: String, default: '' },
+  yMax: Number, integerTicks: { type: Boolean, default: true } });
 const canvas = ref(null);
 let chart;
 const timeLabel = (value) => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -19,7 +22,8 @@ onMounted(() => {
     responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
     plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { title: (items) => timeLabel(items[0].parsed.x) } } },
     scales: { x: { type: 'linear', ticks: { maxTicksLimit: 5, callback: timeLabel } },
-      y: { beginAtZero: true, ticks: { precision: 0 } } },
+      y: { beginAtZero: true, max: props.yMax, title: { display: !!props.unit, text: props.unit },
+        ticks: props.integerTicks ? { precision: 0 } : {} } },
   } });
   update();
 });
@@ -28,7 +32,7 @@ onUnmounted(() => chart?.destroy());
 </script>
 <template>
   <div class="event-chart-canvas">
-    <canvas ref="canvas" role="img" :aria-label="`${label}: ${series.map(s => `${s.label} ${s.points.length} buckets`).join(', ')}`" />
-    <p v-if="series.every(s => !s.points.length)" class="chart-empty">No ingested events in this window</p>
+    <canvas ref="canvas" role="img" :aria-label="`${label}: ${series.map(s => `${s.label} ${s.points.length} ${pointLabel}`).join(', ')}`" />
+    <p v-if="series.every(s => s.points.every(point => point.y === null))" class="chart-empty">{{ emptyMessage }}</p>
   </div>
 </template>

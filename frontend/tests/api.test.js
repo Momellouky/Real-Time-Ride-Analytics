@@ -42,3 +42,15 @@ it('uses the v2 control endpoints and status abort signal', async () => {
   expect(fetch.mock.calls[1][1]).toMatchObject({ method: 'POST', body: JSON.stringify(payload) });
   expect(fetch.mock.calls[2][1]).toMatchObject({ method: 'POST' });
 });
+
+it('fetches benchmark metrics and propagates navigation cancellation', async () => {
+  const { getBenchmarkMetrics } = await import('../src/services/api.js');
+  const controller = new AbortController();
+  const fetch = vi.fn().mockResolvedValue(new Response('{}'));
+  vi.stubGlobal('fetch', fetch);
+  await getBenchmarkMetrics(controller.signal);
+  expect(fetch.mock.calls[0][0]).toBe('/api/v2/benchmark/metrics');
+  const signal = fetch.mock.calls[0][1].signal;
+  controller.abort();
+  expect(signal.aborted).toBe(true);
+});

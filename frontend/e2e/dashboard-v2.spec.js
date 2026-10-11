@@ -19,7 +19,7 @@ test('event polling replaces the full run and recovers from failures', async ({ 
   await page.goto('/dashboard-v2');
   await expect(value(page, 'ride_requests')).toHaveText('5');
   await expect(page.locator('.event-card')).toHaveCount(8);
-  await expect(page.locator('canvas')).toHaveCount(2);
+  await expect(page.locator('.event-panel canvas')).toHaveCount(2);
   await expect(page.getByRole('meter')).toHaveCount(4);
   mode = 'failure';
   await expect(page.getByRole('alert')).toContainText('Showing the last successful update');

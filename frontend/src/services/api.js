@@ -36,6 +36,7 @@ async function request(path, options = {}) {
 export const getCurrentMetrics = () => request('/api/metrics/current?zone_id=ZONE_1');
 export const getDashboard = (signal) => request('/api/dashboard?zone_id=ZONE_1&window=1h', { signal });
 export const getDashboardV2 = (signal) => request('/api/v2/dashboard', { signal });
+export const getBenchmarkMetrics = (signal) => request('/api/v2/benchmark/metrics', { signal });
 export const updateMetrics = (payload) => request('/api/metrics', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
 });

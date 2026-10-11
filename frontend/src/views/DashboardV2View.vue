@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useDashboardV2 } from '../composables/useDashboardV2.js';
 import { CARDS } from '../domain/dashboard-v2.js';
 import EventSeriesChart from '../components/EventSeriesChart.vue';
+import BenchmarkPanel from '../components/BenchmarkPanel.vue';
 const { data, error, refreshing, updatedAt, interval, refresh } = useDashboardV2();
 const lifecycle = computed(() => ['requested', 'accepted', 'cancelled', 'completed'].map((field, i) => ({
   label: field[0].toUpperCase() + field.slice(1), color: ['#4a6bb5', '#126354', '#b77345', '#50863e'][i],
@@ -55,4 +56,5 @@ const driverLabels = { waiting: 'Waiting', assigned: 'Assigned', connected: 'Con
       </section>
     </div>
   </template>
+  <BenchmarkPanel />
 </template>
